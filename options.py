@@ -27,5 +27,7 @@ rendering_kwargs = json.loads("""{
 }""")
 
 dataset_kwargs = {
-    "rootdir":"data/2d/sculpture_bust_of_roza_loewenfeld"
+    # "rootdir":"data/2d/sculpture_bust_of_roza_loewenfeld",
+    # "rootdir":"data/2d/rmin15rmax22",
+    "rootdir": "data/2d/rmin22rmax27",
 }
