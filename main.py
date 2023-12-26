@@ -11,68 +11,17 @@ from networks.OSGDecoder import OSGDecoder
 import numpy as np
 from tqdm import tqdm, trange
 from pathlib import Path
-from imageio import imread_v2 as imgread
 from matplotlib import pyplot as plt
 from options import rendering_kwargs, dataset_kwargs
-import cv2
+from dataset import Renderings
+from torch.optim import Adam
+from functools import partial
 #%%
 normalize = lambda t: (t-t.mean())/t.std()
 imagify = lambda t: (t.permute(0, 2, 3, 1) * 127.5 + 128).clamp(0, 255).to(torch.uint8)
 numpify = lambda t: t.squeeze(0).detach().cpu()
 show = lambda image:plt.imshow(numpify(imagify(image))); plt.show()
 #%%
-class RenderingsDataSet():
-    def __init__(self, rootdir, resolution=64, device="cpu", **kwargs) -> None:
-        """
-        image are in shape 1 x 512 x 512 x 4,
-        the extrinsics are 1 x 4 x 4 matrix, project camera to world. 
-        """
-        pngs = Path(rootdir).glob("*.png")
-        npys = Path(rootdir).glob("*.npy")
-
-        self.device = device
-        self.resize = lambda img : cv2.resize(img, (resolution, resolution))
-        self.paired_paths = list(zip(sorted(pngs), sorted(npys)))
-    
-    def get(self, idx, flag_resize=True, flag_alphablend=False, flag_matrix_3x4=False, flag_matrix_world2cam=False):
-        pngpath, npypath = self.paired_paths[idx]        
-        # print(pngpath, npypath)
-
-        image, extrinsic = imgread(pngpath), np.load(npypath)
-        
-        if flag_resize:
-            image = self.resize(image)
-
-        if flag_alphablend:
-            image = image[..., :3] * image[..., [3]] # multiply alpha
-        else:
-            image = image[..., :3]
-
-        if flag_matrix_3x4:
-            extrinsic = np.concatenate([extrinsic, np.array([[0, 0, 0, 1]])], axis=0)
-
-        if flag_matrix_world2cam:
-            # maybe wrong, not tested
-            extrinsic[:3, :3] = extrinsic[:3, :3].transpose() # from world to camera into camera to world
-            eye = -extrinsic[:3, :3] @ extrinsic[:3, 3]
-            extrinsic[:3, 3] = eye
-
-
-        # unsqueeze and to channel first tensor
-        image = image / 255
-        image = image[np.newaxis, :].astype("f4") # 1 x 512 x 512 x 4
-        image = torch.from_numpy(image).to(self.device).permute(0, 3, 1, 2) 
-        
-        extrinsic = extrinsic[np.newaxis, :].astype("f4") # 1 x 4 x 4
-        extrinsic = torch.from_numpy(extrinsic).to(self.device)
-
-        return image, extrinsic
-    
-    def __len__(self):
-        return len(self.paired_paths)
-
-    def __getitem__(self, idx):
-        return self.get(idx)
 
 class TriPlaneRender():
     ray_sampler = RaySampler()
@@ -103,40 +52,64 @@ cam2world_matrix = LookAtPoseSampler.sample(3.14/2, 3.14/2, torch.tensor([0, 0, 
 # 1, 3, 32, 256, 256
 planes = torch.randn(1, 3, 32, 256, 256, device=device, requires_grad=True)
 render = TriPlaneRender(rendering_kwargs)
-dataset = RenderingsDataSet(device=device, resolution=neural_rendering_resolution, **dataset_kwargs)
+renderings = Renderings(device=device, resolution=neural_rendering_resolution, **dataset_kwargs)
+dataset = renderings.to_dataset(flag_to_tensor=True)
 # image, extrinsic = dataset.get(0, flag_resize=True, flag_alphablend=False)
 image, extrinsic = dataset[0]
 show(image)
 
-
-#%%
-from torch.optim import Adam
-from functools import partial
-
-optimizer = Adam([planes], lr=1e-2)
-l2 = lambda hypo, ref: (hypo - ref)**2
-progress = trange(200)
-image, _cam2world_matrix = dataset[0]
-
 partial_render = partial(render, planes, intrinsics=intrinsics, resolution=neural_rendering_resolution)
 
-for iter in progress: 
-    # for image, cam2world_matrix in dataset:
-    # rgb_image, depth_image = render(planes, cam2world_matrix, intrinsics, neural_rendering_resolution)
-    rgb_image, depth_image = partial_render(cam2world_matrix=cam2world_matrix)
-    loss_map = l2(rgb_image, image)
-    loss = loss_map.mean()
-    loss.backward()
-    progress.desc = str(loss.item())
-    optimizer.step()
-    optimizer.zero_grad()
 
 #%%
+
+
+lr_base = 0.1
+lr_ramp = 0.01
+epochs = 150
+update_times = epochs * len(dataset)
+optimizer = Adam([planes], lr=lr_base)
+lr_lambda=lambda x: lr_ramp**(float(x)/float(update_times))
+scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=lr_lambda)
+l2 = lambda hypo, ref: (hypo - ref)**2
+
+#%%
+progress = trange(epochs)
+for iter in progress: 
+    for image, cam2world_matrix in dataset:
+    # rgb_image, depth_image = render(planes, cam2world_matrix, intrinsics, neural_rendering_resolution)
+        rgb_image, depth_image = partial_render(cam2world_matrix=cam2world_matrix)
+        loss_map = l2(rgb_image, image)
+        loss = loss_map.mean()
+        loss.backward()
+        progress.desc = str(loss.item())
+        optimizer.step()
+        scheduler.step()
+        optimizer.zero_grad()
+
+#%%
+for image, cam2world_matrix in dataset:
+    rgb_image, depth_image = partial_render(cam2world_matrix=cam2world_matrix)
+    show(rgb_image)
+    plt.show()
+    show(image)
+    plt.show()
+#%%
+LookAtPoseSampler.sample(3.14/2, 3.14/2, torch.tensor([0, 0, 0.2], device=device), radius=2.7, device=device)
+#%%
 from util import save_video
+cam2world_sequence = [_cam2world_matrix for _, _cam2world_matrix in dataset]
+
+# images_target = np.stack(
+#     [renderings.get(i, flag_to_tensor=False) for i in range(len(dataset))],
+#     axis=0
+# )
+# save_video(images_target, "target.mp4", neural_rendering_resolution, fps=5)
+
 images = np.stack(
-    [numpify(imagify(partial_render(_cam2world_matrix)[0])) for _, _cam2world_matrix in dataset],
+    [numpify(imagify(partial_render(_cam2world_matrix)[0])) for _cam2world_matrix in cam2world_sequence],
     axis=0,
 )
-save_video(images, "temp.mp4", neural_rendering_resolution, fps=5)
-    
+save_video(images[:, ::-1], "temp.mp4", neural_rendering_resolution, fps=5)
+
 # %%

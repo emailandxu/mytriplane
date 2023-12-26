@@ -1,0 +1,82 @@
+[
+	{
+		"fileIdentifier": "https:\\/\\/sketchfab.com\\/3d-models\\/1520e6bc869b4c0aa6c7f718573338ba",
+		"source": "sketchfab",
+		"license": "Creative Commons - Attribution",
+		"fileType": "glb",
+		"sha256": "7ec15180dd84f7a3dc244767df15a9837165318efb3e1b25392c1364080e8fbe",
+		"metadata": "{}"
+	},
+	{
+		"fileIdentifier": "https:\\/\\/sketchfab.com\\/3d-models\\/1404b40d7445486eafd36d4af451c209",
+		"source": "sketchfab",
+		"license": "Creative Commons - Attribution",
+		"fileType": "glb",
+		"sha256": "f4f6b2c48e76be4477c90693340eba72327f49c9e07300acbc133ddd36a18fd1",
+		"metadata": "{}"
+	},
+	{
+		"fileIdentifier": "https:\\/\\/github.com\\/abdullahdar\\/swordsnshovels\\/blob\\/78808afe4a825b32fcf83b749f939559e1d4aaf2\\/Assets\\/Models\\/Zombie\\/goblin_d_shareyko@Zombie Death.fbx",
+		"source": "github",
+		"license": null,
+		"fileType": "fbx",
+		"sha256": "a52a5c677090f72675dffcfd42b0a8d53396ae896421fd766008c7c0877f6d36",
+		"metadata": "{}"
+	},
+	{
+		"fileIdentifier": "https:\\/\\/sketchfab.com\\/3d-models\\/a46f74dc036542a18131170888087b99",
+		"source": "sketchfab",
+		"license": "Creative Commons - Attribution",
+		"fileType": "glb",
+		"sha256": "ec2379de3403af298db84bfb591ba0c68d6235976290ed26d861800b63887a22",
+		"metadata": "{}"
+	},
+	{
+		"fileIdentifier": "https:\\/\\/github.com\\/ridonebahadir\\/Idle\\/blob\\/1a08e4405ad675053952c17878c5bd4e97465bcd\\/Idle\\/Assets\\/Model\\/3D Collab\\/Tusk_Truck.obj",
+		"source": "github",
+		"license": null,
+		"fileType": "obj",
+		"sha256": "074aa89177f9df1ec669dc8c1c962161fa98d4b7e9771e2ebc7c27ce7b0278d4",
+		"metadata": "{}"
+	},
+	{
+		"fileIdentifier": "https:\\/\\/sketchfab.com\\/3d-models\\/9ba0a29ce9fa45f8bb1f28d22f274ede",
+		"source": "sketchfab",
+		"license": "Creative Commons - Attribution",
+		"fileType": "glb",
+		"sha256": "f8be843b9e5366a7017121fd3d0a1576b510c095957877e63cf05dd08fc5bb2a",
+		"metadata": "{}"
+	},
+	{
+		"fileIdentifier": "https:\\/\\/github.com\\/ramaalfin\\/webAR_UAS\\/blob\\/759883bacc27fee60fa7c3169869725c1d60b501\\/assets\\/img\\/Asset_AR\\/Glb\\/sofa2ungu.glb",
+		"source": "github",
+		"license": null,
+		"fileType": "glb",
+		"sha256": "417558555ed013cf4fbc6e5b524ab5ab124ee55a1d60ea4c061ad1617137acc6",
+		"metadata": "{}"
+	},
+	{
+		"fileIdentifier": "https:\\/\\/sketchfab.com\\/3d-models\\/eec207aecb7f4339bdf11ecf742017b0",
+		"source": "sketchfab",
+		"license": "Creative Commons - Attribution",
+		"fileType": "glb",
+		"sha256": "2de274babcb536a1dc0fb24a5b77bdc1f83be37478f23aa9fa423790655a61b0",
+		"metadata": "{}"
+	},
+	{
+		"fileIdentifier": "https:\\/\\/github.com\\/Harris-lans\\/FoodIsLove\\/blob\\/219b386f93d02ba1f5e938b040c602f443c21a8f\\/Assets\\/Prefabs\\/Environment\\/Env_Models\\/ZenGarden\\/FIL_ZenGargen_PiledRocks.fbx",
+		"source": "github",
+		"license": null,
+		"fileType": "fbx",
+		"sha256": "ffeb959fbe0274e8317f971d433f36c9a2a4358b4f9aea90c0e7130f51733c5b",
+		"metadata": "{}"
+	},
+	{
+		"fileIdentifier": "https:\\/\\/sketchfab.com\\/3d-models\\/659c485350614710b2cc8d88189b4c3f",
+		"source": "sketchfab",
+		"license": "Creative Commons - Attribution",
+		"fileType": "glb",
+		"sha256": "0b6359061aec97b4831fae54364d9495f4dee34a9a99748335dc109efcf0342f",
+		"metadata": "{}"
+	}
+]
