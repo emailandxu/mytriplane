@@ -7,8 +7,8 @@ class FPSCamera(CameraBase):
     def __init__(self) -> None:
         super().__init__()
         self.fov = 90.
-        self.eye = np.array([0., 1., 1.])
-        self.phi = np.deg2rad(220)
+        self.eye = np.array([0., 0., 1.])
+        self.phi = np.deg2rad(180)
         self.theta = np.deg2rad(90)
         self.speed = 1.
         self.frame_t = 1.

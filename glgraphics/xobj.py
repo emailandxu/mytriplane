@@ -5,17 +5,9 @@ from .utils.mathutil import posemat
 
 class XObjBase():
     def __init__(self, name="undefined") -> None:
-        self.scale = np.ones(3)
-        self.center = np.zeros(3) # x, y, z
-        self.quat = np.array([0., 0., 0., 1.]) # x, y, z, w
-        self.scale_offset = np.ones(3)
-
         self.name = name
         self.visible = True
-
-    @property
-    def posemat(self):
-        return posemat(self.center, self.quat, self.scale)
+        self.posemat = np.identity(4)
 
 class XObj(XObjBase):
     def __init__(self, name="undefined") -> None:

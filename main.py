@@ -19,6 +19,11 @@ from util import save_video
 #%%
 import os
 os.environ["CUDA_VISIBLE_DEVICES"] = "2"
+normalize = lambda t: (t-t.mean())/t.std()
+imagify = lambda t: (t.permute(0, 2, 3, 1) * 127.5 + 128).clamp(0, 255).to(torch.uint8)
+numpify = lambda t: t.squeeze(0).detach().cpu().numpy()
+show = lambda image:plt.imshow(numpify(imagify(image))); plt.show()
+
 
 class TriPlaneDecoder(torch.nn.Module):
     def __init__(self, rendering_kwargs) -> None:
@@ -41,11 +46,6 @@ class TriPlaneDecoder(torch.nn.Module):
 
 def make_train():
     from options import rendering_kwargs, dataset_kwargs
-    #make util
-    normalize = lambda t: (t-t.mean())/t.std()
-    imagify = lambda t: (t.permute(0, 2, 3, 1) * 127.5 + 128).clamp(0, 255).to(torch.uint8)
-    numpify = lambda t: t.squeeze(0).detach().cpu()
-    show = lambda image:plt.imshow(numpify(imagify(image))); plt.show()
 
     # make dataset
     device = "cuda"
@@ -94,11 +94,16 @@ def make_train():
     
         return render
         
-    def render_video(therender=None):
+    def render_video(therender=None, cam2worlds=None):
+        """if no parameter was given, it will use 
+           the dataset cam2worlds, and the training render"""
         if therender is None:
             therender = render
+        if cam2worlds is None:
+            cam2worlds = [cam2world for _, cam2world in dataset]
+
         images = np.stack(
-            [numpify(imagify(therender(_cam2world_matrix)[0])) for _cam2world_matrix in [_cam2world_matrix for _, _cam2world_matrix in dataset]],
+            [ numpify(imagify(therender(cam2world)[0])) for cam2world in cam2worlds],
             axis=0,
         )
         return images
@@ -122,17 +127,23 @@ def make_train():
         "post_train":post_train,
         "restore":restore,
         "render_video": render_video,
-        "dataset": lambda : dataset
+        "dataset": lambda : dataset,
+        "common_args": lambda : common_args
     }
 
 # %%
-train_meta = make_train()
-render = train_meta["train"](1)
-train_meta["post_train"]()
-# render = train_meta["restore"]()
-images = train_meta["render_video"](render)
-dataset = train_meta["dataset"]()
-save_video(images[:, ::-1], f"temp1.mp4", images.shape[1], fps=5)
+
+if __name__ == "__main__":
+    train_meta = make_train()
+    # render = train_meta["train"]()
+    # train_meta["post_train"]()
+    render = train_meta["restore"]()
+
+
+    cam2worlds = [LookAtPoseSampler.sample(np.pi * factor * 8 , np.pi * (1-factor) , torch.zeros(3).cuda(), device="cuda", radius=2.2) for factor in np.linspace(0, 1, 300)]
+    images = train_meta["render_video"](render, cam2worlds)
+    dataset = train_meta["dataset"]()
+    save_video(images[:, ::-1], f"temp1.mp4", images.shape[1], fps=30)
 
 
 #%%
