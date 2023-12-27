@@ -6,7 +6,7 @@ from .base import CameraBase
 class FPSCamera(CameraBase):
     def __init__(self) -> None:
         super().__init__()
-        self.fov = 90
+        self.fov = 90.
         self.eye = np.array([0., 1., 1.])
         self.phi = np.deg2rad(220)
         self.theta = np.deg2rad(90)
@@ -80,7 +80,7 @@ class FPSCamera(CameraBase):
             self.wspeed = float_widget("speed", 0.01, 1, 0.1)
         
         if not hasattr(self, "wfov"):
-            self.wfov = float_widget("fov", 0., 90., 45.)
+            self.wfov = float_widget("fov", 0., 180., self.fov)
 
         self.speed = self.wspeed(self.speed)
         self.fov = self.wfov(self.fov)
