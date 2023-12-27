@@ -113,6 +113,11 @@ class Window(WindowBase):
     def mouse_drag_event(self, x, y, dx, dy):
         super().mouse_drag_event(x, y, dx, dy)
         self.camera.mouse_drag_event(x, y, dx, dy)
+
+    def render_xobjs(self):
+        for xobj in self.xobjs:
+            # xobj.quat = mat2quat(rotate_x(t) @ rotate_y(t))
+            xobj.render(self.camera.view, self.camera.proj)
     
     def xrender(self, t, frame_t):
         imgui.text(f"{1/frame_t:.4f}")
@@ -129,10 +134,6 @@ class Window(WindowBase):
 
         for xtask in self.xtasks.values():
             xtask()
-
-        for xobj in self.xobjs:
-            # xobj.quat = mat2quat(rotate_x(t) @ rotate_y(t))
-            xobj.render(self.camera.view, self.camera.proj)
 
 
     @classmethod

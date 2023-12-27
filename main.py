@@ -67,11 +67,14 @@ intrinsics = FOV_to_intrinsics(49.13434264120263, device=device).reshape(-1, 3, 
 render = partial(decoder, planes, intrinsics=intrinsics, resolution=resolution, ray_sampler=ray_sampler, renderer=importance_renderer)
 
 #%%
-loaded_decoder = TriPlaneDecoder(rendering_kwargs)
-loaded_decoder.load_state_dict(torch.load("data/model.pt"))
-loaded_planes = torch.from_numpy(np.load("data/planes.npy")).cuda()
-loaded_render = partial(loaded_decoder, loaded_planes, intrinsics=intrinsics, resolution=resolution, ray_sampler=ray_sampler, renderer=importance_renderer)
-
+try:
+    dataset_name = os.path.basename(dataset_kwargs["rootdir"])
+    loaded_decoder = TriPlaneDecoder(rendering_kwargs)
+    loaded_decoder.load_state_dict(torch.load("data/models/decoder_{dataset_name}.pt"))
+    loaded_planes = torch.from_numpy(np.load("data/models/planes_{dataset_name}.npy")).cuda()
+    loaded_render = partial(loaded_decoder, loaded_planes, intrinsics=intrinsics, resolution=resolution, ray_sampler=ray_sampler, renderer=importance_renderer)
+except Exception:
+    pass
 
 #%%
 def train():
@@ -79,7 +82,7 @@ def train():
     lr_ramp = 0.01
     epochs = 150
     update_times = epochs * len(dataset)
-    optimizer = Adam([planes], lr=lr_base)
+    optimizer = Adam([planes, *decoder.parameters()], lr=lr_base)
     lr_lambda=lambda x: lr_ramp**(float(x)/float(update_times))
     scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=lr_lambda)
     l2 = lambda hypo, ref: (hypo - ref)**2
@@ -98,6 +101,7 @@ def train():
 train()
 
 #%%
+dataset_name = os.path.basename(dataset_kwargs["rootdir"])
 
 cam2world_sequence = [_cam2world_matrix for _, _cam2world_matrix in dataset]
 # images_target = np.stack(
@@ -107,12 +111,11 @@ cam2world_sequence = [_cam2world_matrix for _, _cam2world_matrix in dataset]
 # save_video(images_target, "target.mp4", resolutio, fps=5)
 
 images = np.stack(
-    [numpify(imagify(loaded_render(_cam2world_matrix)[0])) for _cam2world_matrix in cam2world_sequence],
+    [numpify(imagify(render(_cam2world_matrix)[0])) for _cam2world_matrix in cam2world_sequence],
     axis=0,
 )
-save_video(images[:, ::-1], "temp1.mp4", resolution, fps=5)
+save_video(images[:, ::-1], f"data/videos/{dataset_name}.mp4", resolution, fps=5)
 
-# %%
-torch.save(decoder.state_dict(), "data/model.pt")
-np.save("data/planes.npy", planes.cpu().detach().numpy())
+torch.save(decoder.state_dict(), f"data/models/decoder_{dataset_name}.pt")
+np.save(f"data/models/planes_{dataset_name}.npy", planes.cpu().detach().numpy())
 # %%

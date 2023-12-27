@@ -16,7 +16,7 @@ renderings = Renderings(**dataset_kwargs)
 print(len(renderings)//2)
 get_cam2world = lambda idx: renderings.get(idx)[1].squeeze(0)
 
-class DebugWindow(Window):
+class CamVizWindow(Window):
     def __init__(self, ctx: "Context" = None, wnd: "BaseWindow" = None, timer: "BaseTimer" = None, **kwargs):
         super().__init__(ctx, wnd, timer, **kwargs)
 
@@ -31,7 +31,8 @@ class DebugWindow(Window):
 
 
     def xrender(self, t, frame_t):
-        return super().xrender(t, frame_t)
+        super().xrender(t, frame_t)
+        self.render_xobjs()
     
 
-DebugWindow.run()
+CamVizWindow.run()
