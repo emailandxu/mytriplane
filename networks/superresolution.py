@@ -23,7 +23,6 @@ import numpy as np
 #----------------------------------------------------------------------------
 
 # for 512x512 generation
-@persistence.persistent_class
 class SuperresolutionHybrid8X(torch.nn.Module):
     def __init__(self, channels, img_resolution, sr_num_fp16_res, sr_antialias,
                 num_fp16_res=4, conv_clamp=None, channel_base=None, channel_max=None,# IGNORE
@@ -56,7 +55,6 @@ class SuperresolutionHybrid8X(torch.nn.Module):
 #----------------------------------------------------------------------------
 
 # for 256x256 generation
-@persistence.persistent_class
 class SuperresolutionHybrid4X(torch.nn.Module):
     def __init__(self, channels, img_resolution, sr_num_fp16_res, sr_antialias,
                 num_fp16_res=4, conv_clamp=None, channel_base=None, channel_max=None,# IGNORE
@@ -88,7 +86,6 @@ class SuperresolutionHybrid4X(torch.nn.Module):
 #----------------------------------------------------------------------------
 
 # for 128 x 128 generation
-@persistence.persistent_class
 class SuperresolutionHybrid2X(torch.nn.Module):
     def __init__(self, channels, img_resolution, sr_num_fp16_res, sr_antialias,
                 num_fp16_res=4, conv_clamp=None, channel_base=None, channel_max=None,# IGNORE
@@ -121,7 +118,6 @@ class SuperresolutionHybrid2X(torch.nn.Module):
 #----------------------------------------------------------------------------
 
 # TODO: Delete (here for backwards compatibility with old 256x256 models)
-@persistence.persistent_class
 class SuperresolutionHybridDeepfp32(torch.nn.Module):
     def __init__(self, channels, img_resolution, sr_num_fp16_res,
                 num_fp16_res=4, conv_clamp=None, channel_base=None, channel_max=None,# IGNORE
@@ -152,7 +148,6 @@ class SuperresolutionHybridDeepfp32(torch.nn.Module):
 
 #----------------------------------------------------------------------------
 
-@persistence.persistent_class
 class SynthesisBlockNoUp(torch.nn.Module):
     def __init__(self,
         in_channels,                            # Number of input channels, 0 = first block.
@@ -258,7 +253,6 @@ class SynthesisBlockNoUp(torch.nn.Module):
 #----------------------------------------------------------------------------
 
 # for 512x512 generation
-@persistence.persistent_class
 class SuperresolutionHybrid8XDC(torch.nn.Module):
     def __init__(self, channels, img_resolution, sr_num_fp16_res, sr_antialias,
                 num_fp16_res=4, conv_clamp=None, channel_base=None, channel_max=None,# IGNORE

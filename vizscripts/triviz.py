@@ -1,3 +1,7 @@
+import os
+import sys
+sys.path.insert(0, os.getcwd())
+
 import moderngl as mgl
 import moderngl_window as mglw
 from glgraphics import Window, makeCoord, makeGround, applyMat, lookAt, rotate_x, XObj
@@ -15,32 +19,47 @@ RES = 512
 
 render = make_train()["restore"]()
 
+
 def pad(image, target_size=RES):
-    current_size = image.shape[2] 
+    current_size = image.shape[2]
     padding_size = max(0, target_size - current_size)
 
     padding_left = padding_size // 2
     padding_right = padding_size - padding_left
-    padded_image = F.pad(image, (padding_left, padding_right, padding_left, padding_right))
+    padded_image = F.pad(
+        image, (padding_left, padding_right, padding_left, padding_right)
+    )
     return padded_image
+
 
 def resize(image, target_size=RES):
     _, _, height, width = image.size()
-    resized_image = F.interpolate(image, size=(target_size, target_size), mode='bilinear', align_corners=False)
+    resized_image = F.interpolate(
+        image, size=(target_size, target_size), mode="bilinear", align_corners=False
+    )
     return resized_image
+
 
 class CamVizWindow(Window):
     resolution = RES
     window_size = (resolution, resolution)
     aspect_ratio = window_size[0] / window_size[1]
 
-    def __init__(self, ctx: "Context" = None, wnd: "BaseWindow" = None, timer: "BaseTimer" = None, **kwargs):
+    def __init__(
+        self,
+        ctx: "Context" = None,
+        wnd: "BaseWindow" = None,
+        timer: "BaseTimer" = None,
+        **kwargs
+    ):
         super().__init__(ctx, wnd, timer, **kwargs)
 
         self.vao = mglw.geometry.quad_fs()
         self.texture = self.ctx.texture([self.resolution, self.resolution], 3)
         self.prog = self.load_program("default.glsl")
-        self.quad_view = lookAt(np.array((0, 0, -1)), np.array((0, 0, 0)), np.array((0, 1, 0)))
+        self.quad_view = lookAt(
+            np.array((0, 0, -1)), np.array((0, 0, 0)), np.array((0, 1, 0))
+        )
 
         self.xobj = XObj("volume_rendering")
         self.xobj.bind_vao(self.vao)
@@ -63,10 +82,10 @@ class CamVizWindow(Window):
         # self.render_xobjs()
 
         cam2world = self.camera.view.copy()
-        cam2world[:3, 3] = -cam2world[:3, :3].transpose() @ cam2world[:3, 3] 
+        cam2world[:3, 3] = -cam2world[:3, :3].transpose() @ cam2world[:3, 3]
         cam2world[:3, :3] = cam2world[:3, :3].transpose() @ rotate_x(-np.pi)[:3, :3]
 
         self.render_triplane(cam2world)
-    
+
 
 CamVizWindow.run()

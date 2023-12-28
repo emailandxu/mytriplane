@@ -48,9 +48,9 @@ class FPSCamera(CameraBase):
         elif key==108: # L
             self.theta += self.frame_t
         elif key==105: # I
-            self.phi += self.frame_t
-        elif key==107: # K
             self.phi -= self.frame_t
+        elif key==107: # K
+            self.phi += self.frame_t
         elif key==99: # C
             self.eye[1] -= self.frame_t * self.speed
         elif key==32: # Space

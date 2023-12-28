@@ -85,9 +85,7 @@ class ImportanceRenderer(torch.nn.Module):
         self.ray_marcher = MipRayMarcher2()
         self.plane_axes = generate_planes()
 
-    def forward(self, planes, decoder, ray_origins, ray_directions, rendering_options):
-        self.plane_axes = self.plane_axes.to(ray_origins.device)
-
+    def make_depth_coarse(self, ray_origins, ray_directions, rendering_options):
         if rendering_options['ray_start'] == rendering_options['ray_end'] == 'auto':
             ray_start, ray_end = math_utils.get_ray_limits_box(ray_origins, ray_directions, box_side_length=rendering_options['box_warp'])
             is_ray_valid = ray_end > ray_start
@@ -99,6 +97,11 @@ class ImportanceRenderer(torch.nn.Module):
             # Create stratified depth samples
             depths_coarse = self.sample_stratified(ray_origins, rendering_options['ray_start'], rendering_options['ray_end'], rendering_options['depth_resolution'], rendering_options['disparity_space_sampling'])
 
+        return depths_coarse
+
+    def forward(self, planes, decoder, ray_origins, ray_directions, rendering_options):
+        self.plane_axes = self.plane_axes.to(ray_origins.device)
+        depths_coarse = self.make_depth_coarse(ray_origins, ray_directions, rendering_options)
         batch_size, num_rays, samples_per_ray, _ = depths_coarse.shape
 
         # Coarse Pass
