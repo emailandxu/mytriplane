@@ -40,18 +40,27 @@ class TriPlaneDecoder(torch.nn.Module):
             },
         ).cuda()
 
+        self.supres = SuperresolutionHybrid8XDC(
+            channels=32,
+            img_resolution=rendering_kwargs.get("image_resolution", 512),
+            sr_num_fp16_res=0,
+            sr_antialias=rendering_kwargs["sr_antialias"]
+        ).cuda()
+
+        self.ws = torch.zeros((1, 14, 512), device="cuda", requires_grad=False)
+
     def __call__(
         self,
         planes,
         cam2world_matrix,
         intrinsics,
-        resolution,
+        triplane_output_res,
         ray_sampler,
         renderer,
         rendering_kwargs,
     ):
         ray_origins, ray_directions = ray_sampler(
-            cam2world_matrix, intrinsics, resolution
+            cam2world_matrix, intrinsics, triplane_output_res
         )
         feature_samples, depth_samples, weights_samples = renderer(
             planes, self.decoder, ray_origins, ray_directions, rendering_kwargs
@@ -59,7 +68,7 @@ class TriPlaneDecoder(torch.nn.Module):
 
         N, M, _ = ray_origins.shape
         # Reshape into 'raw' neural-rendered image
-        H = W = resolution
+        H = W = triplane_output_res
         feature_image = (
             feature_samples.permute(0, 2, 1)
             .reshape(N, feature_samples.shape[-1], H, W)
@@ -70,7 +79,13 @@ class TriPlaneDecoder(torch.nn.Module):
             :, :3
         ]  # raw rgb images, rest chaneels are for super resolution
 
-        return rgb_image, depth_image
+        rgb_image = feature_image[:, :3]
+
+        sr_image = self.supres(rgb_image, feature_image, self.ws, noise_mode=rendering_kwargs['superresolution_noise_mode'])
+
+
+        # return rgb_image, depth_image
+        return sr_image, depth_image
 
 
 def make_train():
@@ -78,8 +93,8 @@ def make_train():
 
     # make dataset
     device = "cuda"
-    resolution = 128
-    renderings = Renderings(device=device, resolution=resolution, **dataset_kwargs)
+    triplane_output_res = 128
+    renderings = Renderings(device=device, **dataset_kwargs)
     dataset = renderings.to_dataset(flag_to_tensor=True)
 
     # make render
@@ -94,7 +109,7 @@ def make_train():
 
     common_args = dict(
         intrinsics=intrinsics,
-        resolution=resolution,
+        triplane_output_res=triplane_output_res,
         ray_sampler=ray_sampler,
         renderer=importance_renderer,
         rendering_kwargs=rendering_kwargs,
@@ -102,28 +117,31 @@ def make_train():
     render = partial(decoder, planes, **common_args)
 
     # make optimizer
-    lr_base = 0.1
-    lr_ramp = 0.01
-    epochs = 150
-    update_times = epochs * len(dataset)
+    lr_base = 1e-1
+    lr_ramp = 0.001
+    maxiter = 150 * len(dataset)
     optimizer = Adam([planes, *decoder.parameters()], lr=lr_base)
-    lr_lambda=lambda x: lr_ramp**(float(x)/float(update_times))
+    lr_lambda = lambda x: lr_ramp ** (float(x) / float(maxiter))
     scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=lr_lambda)
+
+    l1 = lambda hypo, ref: (hypo - ref).abs()
     l2 = lambda hypo, ref: (hypo - ref) ** 2
 
     def train(early_stop=0):
-        progress = trange(epochs)
+        progress = trange(maxiter)
         for iter in progress:
-            for j, (image, cam2world_matrix) in enumerate(dataset):
-                # rgb_image, depth_image = render(planes, cam2world_matrix, intrinsics, resolutio)
-                rgb_image, depth_image = render(cam2world_matrix=cam2world_matrix)
-                loss_map = l2(rgb_image, image)
-                loss = loss_map.mean()
-                loss.backward()
-                progress.desc = str(loss.item())
-                optimizer.step()
-                scheduler.step()
-                optimizer.zero_grad()
+            j = np.random.randint(0, len(dataset))
+            # rgb_image, depth_image = render(planes, cam2world_matrix, intrinsics, resolutio)
+            image, cam2world_matrix = dataset[j]
+            rgb_image, depth_image = render(cam2world_matrix=cam2world_matrix)
+            loss_map = l1(rgb_image, image)
+            loss = loss_map.mean()
+            loss.backward()
+            progress.desc = f"loss: {loss.item():.4f}, lr:{lr_lambda(iter):.4f}"
+
+            optimizer.step()
+            scheduler.step()
+            optimizer.zero_grad()
 
             # if early_stop > 0 and iter*len(dataset) + j > early_stop:
             if early_stop > 0 and iter > early_stop:
@@ -146,10 +164,11 @@ def make_train():
 
     def post_train():
         dataset_name = os.path.basename(dataset_kwargs["rootdir"])
+        images = render_video()[:, ::-1]
         save_video(
-            render_video()[:, ::-1],
+            images,
             f"data/videos/{dataset_name}.mp4",
-            resolution,
+            images.shape[1],
             fps=5,
         )
         torch.save(decoder.state_dict(), f"data/models/decoder_{dataset_name}.pt")
@@ -171,10 +190,12 @@ def make_train():
                 np.pi * factor * 8,
                 np.pi * (1 - factor),
                 torch.zeros(3).cuda(),
-                radius=2.2,
+                radius=1.5,
                 device="cuda",
             )
-            for factor in tqdm(np.linspace(0, 1, 300), desc="video rendering:", disable=True)
+            for factor in tqdm(
+                np.linspace(0, 1, 300), desc="video rendering:", disable=True
+            )
         ]
 
         images = render_video(render, cam2worlds)
@@ -182,7 +203,7 @@ def make_train():
         save_video(images[:, ::-1], f"{save_path}", images.shape[1], fps=30)
 
     def view_rays(cam2world):
-        ray_origins, ray_directions = ray_sampler(cam2world, intrinsics, resolution)
+        ray_origins, ray_directions = ray_sampler(cam2world, intrinsics, triplane_output_res)
         depths_coarse = importance_renderer.make_depth_coarse(
             ray_origins, ray_directions, rendering_kwargs
         )
@@ -214,10 +235,14 @@ def make_train():
 
 if __name__ == "__main__":
     train_meta = make_train()
-    # train_meta["train"]()
-    # train_meta["post_train"]()
+    try:
+        train_meta["train"]()
+    except KeyboardInterrupt as e:
+        pass
 
-    train_meta["restore"]()
+    # train_meta["post_train"]()
     train_meta["offline_render"]("temp.mp4")
+
+    # train_meta["restore"]()
 
 # %%

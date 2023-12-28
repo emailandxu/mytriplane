@@ -63,7 +63,7 @@ class Renderings():
         get = partial(Renderings.get, self, *args, **kwargs)
         return GenericDataset(get, len(self))
 
-    
+from functools import lru_cache
 class GenericDataset:
     def __init__(self, get:Callable, length:int=0):
         self.get = get
@@ -72,6 +72,7 @@ class GenericDataset:
     def __len__(self):
         return self.length
 
+    @lru_cache(maxsize=128)
     def __getitem__(self, idx):
         return self.get(idx) # it seems not pass self into the get function
     
