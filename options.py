@@ -11,7 +11,8 @@ rendering_kwargs = {
         0,
         0.2
     ],
-    "image_resolution": 512,
+    "triplane_output_res": 64,
+    "image_resolution": 64,
     "disparity_space_sampling": False,
     "clamp_mode": "softplus",
     "superresolution_module": "networks.SuperresolutionHybrid8XDC",
@@ -29,6 +30,6 @@ dataset_kwargs = {
     # "rootdir":"data/2d/sculpture_bust_of_roza_loewenfeld",
     # "rootdir":"data/2d/rmin15rmax22",
     # "rootdir": "data/2d/rmin22rmax27",
-    "rootdir": "data/2d/rmin15rmax22view36",
+    "rootdir": "data/2d/jupiter",
     "resolution": rendering_kwargs["image_resolution"]
 }
