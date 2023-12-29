@@ -14,8 +14,9 @@ class OSGDecoder(torch.nn.Module):
         
     def forward(self, sampled_features, ray_directions):
         # Aggregate features
-        sampled_features = sampled_features.mean(1)
+        sampled_features = sampled_features.mean(1) 
         x = sampled_features
+        x = torch.concat([sampled_features, ray_directions], dim=-1)
 
         N, M, C = x.shape
         x = x.view(N*M, C)

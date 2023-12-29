@@ -29,6 +29,7 @@ class WindowBase(mglw.WindowConfig):
         """integrate imgui"""
         self.ctx.clear(0, 0, 0)
         self.ctx.enable(moderngl.DEPTH_TEST)
+        self.ctx.enable(moderngl.BLEND)
         imgui.new_frame()
         # super().render(time, frame_time) # may casue not implented error
         self.xrender(t, frame_t)

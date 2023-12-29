@@ -80,10 +80,10 @@ def sample_from_3dgrid(grid, coordinates):
     return sampled_features
 
 class ImportanceRenderer(torch.nn.Module):
-    def __init__(self):
+    def __init__(self, device="cuda"):
         super().__init__()
         self.ray_marcher = MipRayMarcher2()
-        self.plane_axes = generate_planes()
+        self.plane_axes = generate_planes().to(device)
 
     def make_depth_coarse(self, ray_origins, ray_directions, rendering_options):
         if rendering_options['ray_start'] == rendering_options['ray_end'] == 'auto':

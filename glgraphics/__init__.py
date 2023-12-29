@@ -25,22 +25,22 @@ class Window(WindowBase):
         self.default_prog = self.load_program("default.glsl")
         self.pcd_prog = self.load_program("pcd.glsl")
 
-    def setAxis(self, vertices:List[np.ndarray], colors:np.ndarray=None, name=None):
+    def setAxis(self, vertices:List[np.ndarray], name=None):
         """assume vertices and colors in shape (n, 3, 6),
          axis is defined by three six point from 3 point3 to to 3 point3 """
 
         vertices = np.concatenate(vertices, axis=0).reshape(-1, 3, 6)
+
         assert len(vertices.shape) == 3 and vertices.shape[1:] == (3, 6)
 
-        if colors is None:
-            n = vertices.shape[0]
-            colors = np.array([[[1, 0, 0] * 2, [0, 1, 0] * 2, [0, 0, 1] * 2]], dtype="f4").repeat(n, axis=0) # n x 3 x 6
-
+        n = vertices.shape[0]
+        colors = np.array([[[1, 0, 0, 1] * 2, [0, 1, 0, 1] * 2, [0, 0, 1, 1] * 2]], dtype="f4").repeat(n, axis=0) # n x 3 x 6
+       
         xobj = XObj("axis" + (f"_{name}" if name else "") )
         vao = VAO(mode=mgl.LINES)
 
         vao.buffer(np.array(vertices, dtype="f4"), '3f', 'in_position')
-        vao.buffer(np.array(colors,  dtype="f4"), '3f', 'in_rgb')
+        vao.buffer(np.array(colors,  dtype="f4"), '4f', 'in_rgba')
 
         xobj.bind_vao(vao)
         xobj.bind_prog(self.pcd_prog)       
@@ -65,10 +65,13 @@ class Window(WindowBase):
         return xobj
     
     def setPoints(self, points, rgbs, center=None, quat=None, scale=None, name=None):
+        if rgbs.shape[-1] == 3:
+            rgbs = np.concatenate([rgbs, np.ones_like(rgbs[..., [0]])], axis=-1)
+
         xobj = XObj("points" + (f"_{name}" if name else ""))
         vao = VAO(mode=mgl.POINTS)
         vao.buffer(np.array(points, dtype="f4"), "3f", "in_position")
-        vao.buffer(np.array(rgbs, dtype="f4"), "3f", "in_rgb")
+        vao.buffer(np.array(rgbs, dtype="f4"), "4f", "in_rgba")
 
         xobj.bind_vao(vao)
         xobj.bind_prog(self.pcd_prog)
@@ -85,12 +88,12 @@ class Window(WindowBase):
             vertices = makeGround()
         
         if colors is None:
-            colors = np.ones_like(vertices)
+            colors = np.array([[1, 1, 1, 1]]).astype("f4").repeat(len(vertices),1)
     
         xobj = XObj("ground")
         vao = VAO(mode=mgl.LINES)
         vao.buffer(np.array(vertices, dtype="f4"), '3f', 'in_position')
-        vao.buffer(np.array(colors,  dtype="f4"), '3f', 'in_rgb')
+        vao.buffer(np.array(colors,  dtype="f4"), '4f', 'in_rgba')
         xobj.bind_vao(vao)
         xobj.bind_prog(self.pcd_prog)       
         self.xobjs.append(xobj)

@@ -33,12 +33,13 @@ class TriPlaneDecoder(torch.nn.Module):
     def __init__(self, rendering_kwargs) -> None:
         super().__init__()
         self.decoder = OSGDecoder(
-            32,
+            35,
             {
                 "decoder_lr_mul": rendering_kwargs.get("decoder_lr_mul", 1),
                 "decoder_output_dim": 32,
             },
         ).cuda()
+
 
         if (
             rendering_kwargs["image_resolution"]
@@ -46,12 +47,14 @@ class TriPlaneDecoder(torch.nn.Module):
         ):
             self.supres = SuperresolutionHybrid8XDC(
                 channels=32,
-                img_resolution=rendering_kwargs.get("image_resolution", 512),
+                img_resolution=512, # must be 512
                 sr_num_fp16_res=0,
                 sr_antialias=rendering_kwargs["sr_antialias"],
-            ).cuda()
+            )
 
-            self.ws = torch.zeros((1, 14, 512), device="cuda", requires_grad=False)
+            self.ws = torch.zeros((1, 14, 512), requires_grad=False)
+            self.supres = self.supres.cuda()
+            self.ws = self.ws.cuda()
 
     def __call__(
         self,
@@ -86,7 +89,10 @@ class TriPlaneDecoder(torch.nn.Module):
 
         rgb_image = feature_image[:, :3]
 
-        if hasattr(self, "supres"):
+        if (
+            rendering_kwargs["image_resolution"]
+            > rendering_kwargs["triplane_output_res"]
+        ):
             sr_image = self.supres(
                 rgb_image,
                 feature_image,
@@ -109,8 +115,8 @@ def make_train():
 
     # make render
     # 1, 3, 32, 256, 256
-    planes = torch.randn(1, 3, 32, 512, 512, device=device, requires_grad=True)
-    decoder = TriPlaneDecoder(rendering_kwargs)
+    planes = torch.randn(1, 3, 32, 256, 256, device=device, requires_grad=True)
+    triplane_decoder = TriPlaneDecoder(rendering_kwargs)
     ray_sampler = RaySampler()
     importance_renderer = ImportanceRenderer()
     intrinsics = FOV_to_intrinsics(49.13434264120263, device=device).reshape(
@@ -123,13 +129,13 @@ def make_train():
         renderer=importance_renderer,
         rendering_kwargs=rendering_kwargs,
     )
-    render = partial(decoder, planes, **common_args)
+    render = partial(triplane_decoder, planes, **common_args)
 
     # make optimizer
     lr_base = 1e-1
     lr_ramp = 0.001
     maxiter = 150 * len(dataset)
-    optimizer = Adam([planes, *decoder.parameters()], lr=lr_base)
+    optimizer = Adam([planes, *triplane_decoder.parameters()], lr=lr_base)
     lr_lambda = lambda x: lr_ramp ** (float(x) / float(maxiter))
     scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=lr_lambda)
 
@@ -157,6 +163,7 @@ def make_train():
                 return render
         return render
 
+    @torch.no_grad()
     def render_video(cam2worlds, therender=None):
         """if no parameter was given, it will use
         the dataset cam2worlds, and the training render"""
@@ -168,7 +175,8 @@ def make_train():
             axis=0,
         )
         return images
-
+    
+    @torch.no_grad()
     def render_inter_video(save_path):
         cam2worlds = [
             LookAtPoseSampler.sample(
@@ -187,6 +195,7 @@ def make_train():
         # print("encoding video..")
         save_video(images, f"{save_path}", *images.shape[1:3], fps=30)
 
+    @torch.no_grad()
     def render_dataset_video(save_path):
         cam2worlds = []
         target_images = []
@@ -205,23 +214,27 @@ def make_train():
         # print(images.shape)
         save_video(images, f"{save_path}", *images.shape[1:3], fps=5)
 
-
     def post_train():
         dataset_name = os.path.basename(dataset_kwargs["rootdir"])
         render_dataset_video(f"data/videos/{dataset_name}.mp4")
-        torch.save(decoder.state_dict(), f"data/models/decoder_{dataset_name}.pt")
+        torch.save(
+            triplane_decoder.state_dict(), f"data/models/decoder_{dataset_name}.pt"
+        )
         np.save(f"data/models/planes_{dataset_name}.npy", planes.cpu().detach().numpy())
 
     def restore():
         dataset_name = os.path.basename(dataset_kwargs["rootdir"])
-        decoder.load_state_dict(torch.load(f"data/models/decoder_{dataset_name}.pt"))
+        triplane_decoder.load_state_dict(
+            torch.load(f"data/models/decoder_{dataset_name}.pt")
+        )
         # for inplace assignment
         with torch.no_grad():
             planes[:] = torch.from_numpy(
                 np.load(f"data/models/planes_{dataset_name}.npy")
             ).cuda()
         return render
-
+    
+    @torch.no_grad()
     def view_rays(cam2world):
         ray_origins, ray_directions = ray_sampler(
             cam2world, intrinsics, triplane_output_res
@@ -240,6 +253,18 @@ def make_train():
             .reshape(batch_size, -1, 3)
         )
         return depths_coarse, sample_coordinates, sample_directions
+    @torch.no_grad()
+    def view_volume(cam2world):
+        depths_coarse, sample_coordinates, sample_directions = view_rays(cam2world)
+        out = importance_renderer.run_model(
+            planes,
+            triplane_decoder.decoder,
+            sample_coordinates,
+            sample_directions,
+            rendering_kwargs,
+        )
+        colors_coarse, densities_coarse = out["rgb"], out["sigma"]
+        return colors_coarse, densities_coarse
 
     return {
         "train": train,
@@ -248,6 +273,7 @@ def make_train():
         "dataset": lambda: dataset,
         "common_args": lambda: common_args,
         "view_rays": view_rays,
+        "view_volume": view_volume,
         "render_inter_video": render_inter_video,
         "render_dataset_video": render_dataset_video,
     }
