@@ -28,12 +28,11 @@ class Renderings():
         self.paired_paths = list(zip(sorted(pngs), sorted(npys)))
     
     def get(self, idx, flag_resize=True, flag_alphablend=False, flag_matrix_3x4=False, flag_to_tensor=False):
-        pngpath, npypath = self.paired_paths[idx]
-        print(pngpath, npypath)
+        pngpath, npypath = self.paired_paths[idx]        
         # print(pngpath, npypath)
 
         image, extrinsic = imgread(pngpath), np.load(npypath)
-        extrinsic[:3, :3] = extrinsic[:3, :3] # @ rotate_x(-np.pi)[:3, :3]
+        extrinsic[:3, :3] = extrinsic[:3, :3] @ rotate_x(-np.pi)[:3, :3]
         
         if flag_resize:
             image = self.resize(image)

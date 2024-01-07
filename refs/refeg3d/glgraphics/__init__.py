@@ -64,10 +64,7 @@ class Window(WindowBase):
         self.xobjs.append(xobj)
         return xobj
     
-    def setPoints(self, points, rgbs=None, center=None, quat=None, scale=None, name=None):
-        if rgbs is None:
-            rgbs = np.ones_like(points)
-
+    def setPoints(self, points, rgbs, center=None, quat=None, scale=None, name=None):
         if rgbs.shape[-1] == 3:
             rgbs = np.concatenate([rgbs, np.ones_like(rgbs[..., [0]])], axis=-1)
 
