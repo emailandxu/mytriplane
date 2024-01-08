@@ -397,11 +397,6 @@ def get_3x4_RT_matrix_from_blender(cam: bpy.types.Object) -> Matrix:
         Matrix: The 3x4 RT matrix from the given camera.
     """
 
-    focal_length = cam.data.lens
-    sensor_width = cam.data.sensor_width
-    fov_radians = 2 * math.atan((sensor_width / 2) / focal_length)
-    fov_degrees = math.degrees(fov_radians)
-    # print("fov raidians:", fov_radians, "fov_degrees:", fov_degrees)
 
     # Use matrix_world instead to account for all constraints
     location, rotation = cam.matrix_world.decompose()[0:2]
@@ -824,10 +819,10 @@ def render_object(
     for i in range(num_renders):
         # set camera
         camera = randomize_camera(
-            # radius_min=2.2,
-            # radius_max=2.7,
-            radius_min=1.5,
-            radius_max=2.2,
+            radius_min=2.2,
+            radius_max=2.7,
+            # radius_min=1.5,
+            # radius_max=2.2,
             only_northern_hemisphere=only_northern_hemisphere,
         )
 
@@ -842,7 +837,15 @@ def render_object(
         # np.save(rt_matrix_path, rt_matrix)
 
         # save 4x4 camera to world matrix
+        cam = bpy.data.objects['Camera']
+        focal_length = cam.data.lens
+        print(focal_length)
+        sensor_width = cam.data.sensor_width
+        fov_radians = 2 * math.atan((sensor_width / 2) / focal_length)
+        fov_degrees = math.degrees(fov_radians)
+        print("fov raidians:", fov_radians, "fov_degrees:", fov_degrees, "focal_length", focal_length)
         matrix_world = to_opengl(camera.matrix_world)
+        # matrix_world = camera.matrix_world
         matrix_world_path = os.path.join(output_dir, f"matrixworld4opengl_{i:03d}.npy")
         np.save(matrix_world_path, matrix_world)
 

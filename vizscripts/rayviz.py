@@ -27,19 +27,60 @@ class CamVizWindow(Window):
         self.setGround(makeGround())
         self.setAxis(makeCoord())
 
-        cam2world = get_cam2world(0)
-        print(cam2world.shape)
-        depths_coarse, sample_coordinates, sample_directions = train_meta["view_rays"](cam2world)
-        print(depths_coarse.shape, sample_coordinates.shape, sample_directions.shape)
+        prefix = "my"
+
+        def vizcoord():
+            pts = np.load(f"data/coord/{prefix}_coord.npy")
+            try:
+                colors = np.load(f"data/coord/{prefix}_rgb.npy")
+            except:
+                colors = np.ones_like(pts)
+
+            print(pts.shape, colors.shape)
+            if len(pts.shape) == 3:
+                pts = pts[0]
+                colors = colors[0]
+            choice = np.random.choice(pts.shape[0], int(pts.shape[0]*5e-2), replace=False)
+            pts = pts[choice]
+            colors = colors[choice]
+            print(pts.shape, colors.shape, choice.shape)
+            self.setPoints(pts, colors)
+
+        def vizdir():
+            dirs = np.load(f"data/coord/{prefix}_world_rel_points.npy")
+            print(dirs.shape)
+            if len(dirs.shape) == 3:
+                dirs = dirs[0]
+            colors = np.array([[1, 0, 0]]).repeat(len(dirs), axis=0)
+            self.setPoints(dirs, colors)
+
+            dirs = np.load(f"data/coord/{prefix}_cam_rel_points.npy")
+            print(dirs.shape)
+            if len(dirs.shape) == 3:
+                dirs = dirs[0]
+            dirs = dirs[..., :3]
+            colors = np.array([[0, 1, 0]]).repeat(len(dirs), axis=0)
+            self.setPoints(dirs, colors)
+
+            dirs = np.load(f"data/coord/{prefix}_direction.npy")
+            print(dirs.shape)
+            if len(dirs.shape) == 3:
+                dirs = dirs[0]
+            dirs = dirs[..., :3]
+            colors = np.array([[0, 0, 1]]).repeat(len(dirs), axis=0)
+            self.setPoints(dirs, colors)
 
 
-        pts = numpify(sample_directions)
-        colors = np.array([[1,0,0]]).repeat(len(pts), axis=0)
-        self.setPoints(pts, colors)
+        def vizcam():
+            cam2world = np.load(f"data/coord/{prefix}_cam2world.npy")
+            if len(cam2world.shape) == 3:
+                cam2world = cam2world[0]
+            self.setAxis(applyMat(cam2world, makeCoord()))
 
-        pts = numpify(sample_coordinates)
-        colors = np.array([[1,1,1]]).repeat(len(pts), axis=0)
-        self.setPoints(pts, colors)
+        vizdir()
+        vizcam()
+        vizcoord()
+
 
     def xrender(self, t, frame_t):
         super().xrender(t, frame_t)
