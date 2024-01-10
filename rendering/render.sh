@@ -4,10 +4,10 @@ blender-3.2.2-linux-x64/blender \
 blender_script.py \
 -- \
 --object_path \
-'/data1/xushuli/git-repo/mytriplane/data/3d/free_iphone_13_pro_2021.glb' \
+'/data1/xushuli/git-repo/mytriplane/data/3d/sculpture_bust_of_roza_loewenfeld.glb' \
 --num_renders \
 36 \
 --output_dir \
-'/data1/xushuli/git-repo/mytriplane/data/2d/free_iphone_13_pro_2021' \
+'/data1/xushuli/git-repo/mytriplane/data/2d/sculpture_bust_of_roza_loewenfeld' \
 --engine \
 BLENDER_EEVEE

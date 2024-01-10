@@ -21,6 +21,12 @@ class XObj(XObjBase):
 
     def bind_texture(self, texture):
         self.texture = texture
+    
+    def bind_vbo(self, vbo):
+        self.vbo = vbo
+
+    def bind_cbo(self, cbo):
+        self.cbo = cbo
 
     def render(self, view, proj, vao=None, prog=None):
         if not self.visible:

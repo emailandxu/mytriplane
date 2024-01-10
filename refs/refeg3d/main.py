@@ -119,7 +119,7 @@ def make_train():
     triplane_decoder = TriPlaneDecoder(rendering_kwargs)
     ray_sampler = RaySampler()
     importance_renderer = ImportanceRenderer()
-    intrinsics = FOV_to_intrinsics(49.13434264120263, device=device).reshape(
+    intrinsics = FOV_to_intrinsics(0.8575560548920328, device=device).reshape(
         -1, 3, 3
     )  # 1, 3, 3
 

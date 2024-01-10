@@ -29,7 +29,6 @@ class Renderings():
     
     def get(self, idx, flag_resize=True, flag_alphablend=False, flag_matrix_3x4=False, flag_to_tensor=False):
         pngpath, npypath = self.paired_paths[idx]
-        print(pngpath, npypath)
         # print(pngpath, npypath)
 
         image, extrinsic = imgread(pngpath), np.load(npypath)
