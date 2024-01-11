@@ -165,4 +165,4 @@ class Window(WindowBase):
 
     @classmethod
     def run(cls):
-        run_window_config(cls)
+        run_window_config(cls, args=["-wnd", "pygame2"])
