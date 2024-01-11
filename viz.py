@@ -6,7 +6,7 @@ from moderngl import Context
 from raycam import to_pinhole, PinholeCamera, RayBundle
 import numpy as np
 import math
-from glgraphics import Window, makeCoord, makeGround, applyMat, rotate_x
+from glgraphics import Window, makeCoord, makeGround, applyMat, rotate_x, rotate_y, lookAt
 from dataset import Renderings
 from field import TriMipRF
 import torch
@@ -20,15 +20,17 @@ from contextlib import contextmanager
 
 DEVICE = "cuda"
 RES = 128
-NEARPLANE = 1
+NEARPLANE = 0.5
 FARPLANE = 3
-RENDERSTEP = 1e-1
+RENDERSTEP = 1e-2
 AABB = 0.5
-DATASET = "data/2d/free_iphone_13_pro_2021"
+DATASET = "data/2d/sculpture_bust_of_roza_loewenfeld"
+# DATASET = "data/2d/jupiter"
 
-renderings = Renderings(
-    DATASET, resolution=RES, device=DEVICE
-).to_dataset(flag_to_tensor=True)
+
+renderings = Renderings(DATASET, resolution=RES, device=DEVICE).to_dataset(
+    flag_to_tensor=True
+)
 # torch.Size([1, 3, 64, 64]) torch.Size([1, 4, 4])
 
 field = TriMipRF().cuda()
@@ -37,7 +39,9 @@ ray: RayBundle = to_pinhole(fov=0.8575560548920328, res_w=RES, res_h=RES).build(
 
 def sigma_fn(t_starts, t_ends, ray_indices, rays_o, rays_d):
     """Define how to query density for the estimator."""
-    positions = rays_o[ray_indices] + rays_d[ray_indices] * (t_starts + t_ends)[:, None] / 2.0
+    positions = (
+        rays_o[ray_indices] + rays_d[ray_indices] * (t_starts + t_ends)[:, None] / 2.0
+    )
     # print(positions, positions.max(), positions.min())
     sigmas = field.query_density(x=positions)["density"]
     # print(positions, sigmas)
@@ -45,7 +49,9 @@ def sigma_fn(t_starts, t_ends, ray_indices, rays_o, rays_d):
 
 
 def rgb_sigma_fn(t_starts, t_ends, ray_indices, rays_o, rays_d):
-    positions = rays_o[ray_indices] + rays_d[ray_indices] * (t_starts + t_ends)[:, None] / 2.0
+    positions = (
+        rays_o[ray_indices] + rays_d[ray_indices] * (t_starts + t_ends)[:, None] / 2.0
+    )
     res = field.query_density(
         x=positions,
         return_feat=True,
@@ -66,7 +72,9 @@ def save_pts(pts):
 
 
 aabb = torch.tensor([-AABB, -AABB, -AABB, AABB, AABB, AABB], device=DEVICE)
-estimator = nerfacc.OccGridEstimator(roi_aabb=[0, 0, 0, 1, 1, 1]).cuda() # due to nvdiffrast texture uv sample, it must be in 0-1
+estimator = nerfacc.OccGridEstimator(
+    roi_aabb=[0, 0, 0, 1, 1, 1]
+).cuda()  # due to nvdiffrast texture uv sample, it must be in 0-1
 
 lr_base = 1e-3
 lr_ramp = 0.00001
@@ -84,6 +92,7 @@ l2 = lambda hypo, ref: (hypo - ref) ** 2
 
 progress = iter(trange(10000))
 
+
 class Debug(Window):
     def __init__(
         self,
@@ -93,7 +102,7 @@ class Debug(Window):
         **kwargs,
     ):
         super().__init__(ctx, wnd, timer, **kwargs)
-        self.setAxis(makeCoord()*10)
+        self.oworld_axis = self.setAxis(makeCoord() * 10)
         # self.setGround(makeGround())
         self.camera.eye = np.array([0, 1, 10], dtype="f4")
         self.camera.fov = math.degrees(0.6911112070083618)
@@ -108,37 +117,97 @@ class Debug(Window):
         self.plane3 = self.setPlane(
             (np.random.rand(*(RES, RES, 3)) * 255).astype("u1"), center=(-1.1, 2.1, -3)
         )
+        self.plane4 = self.setPlane(
+            (np.random.rand(*(RES, RES, 3)) * 255).astype("u1"), center=(1.1, 2.1, -3)
+        )
 
         self.step = 0
         self.lr = lr_base
         self.wviz = bool_widget("viz", False)
         self.wtrain = bool_widget("train", True)
-    
+
     @contextmanager
-    def debugviz(self, ):
+    def debugviz(
+        self,
+    ):
         do_debug = self.wviz()
 
         if not hasattr(self, "osample_points"):
-            self.ocamline = self.setLines(np.array([[0,0,0], [1, 2, 3]]), np.array([[0,1,0],[1,0,0]]))
-            self.oaabb_axis = self.setAxis(contraction(makeCoord() / (AABB*2), aabb.cpu().numpy()) )
-            self.osample_points = self.setPoints(np.zeros((64*64*64, 3)))
+            self.ocamline = self.setLines(
+                np.array([[0, 0, 0], [1, 2, 3]]), np.array([[0, 1, 0], [1, 0, 0]])
+            )
+            self.oaabb_axis = self.setAxis(
+                contraction(makeCoord() / (AABB * 2), aabb.cpu().numpy())
+            )
+            self.osample_points = self.setPoints(np.zeros((64 * 64 * 64, 3)))
             self.wgrid_sample = bool_widget("grid_sample", True)
-        else:
-            self.ocamline.visible = do_debug
-            self.oaabb_axis.visible = do_debug
-            self.osample_points.visible = do_debug
-        
-        yield (do_debug, self.ocamline, self.oaabb_axis, self.osample_points, self.wgrid_sample)
+
+        self.ocamline.visible = do_debug
+        self.oaabb_axis.visible = do_debug
+        self.osample_points.visible = do_debug
+        self.oworld_axis.visible = do_debug
+
+        yield (
+            do_debug,
+            self.ocamline,
+            self.oaabb_axis,
+            self.osample_points,
+            self.wgrid_sample,
+        )
 
         self.ocamline.visible = do_debug
         self.oaabb_axis.visible = do_debug
         self.osample_points.visible = do_debug
 
+    @torch.no_grad()
+    def volrender(self, t, frame_t):
+        w2c = lookAt(
+            eye=applyMat(rotate_x(t) @ rotate_y(t), np.array([1, 1, 1])) + np.array([0.5, 0.5, 0.5]),
+            at=np.array([0.5, 0.5, 0.5]),
+            up=np.array([0, 1, 0]),
+        )
+        c2w = np.linalg.inv(w2c)
+        c2w = torch.from_numpy(c2w).cuda()
+
+        rays_o = ray.origins.reshape(-1, 3) + c2w[:3, 3]
+        rays_d = (c2w[:3, :3] @ ray.directions.reshape(-1, 3).T).T
+
+        # estimator.update_every_n_steps(
+        #     step=self.step,
+        #     occ_eval_fn=lambda x: field.query_density(x)["density"],
+        #     occ_thre=1e-2,
+        # )
+
+        # print(torch.nonzero(estimator.binaries).shape)
+        ray_indices, t_starts, t_ends = estimator.sampling(
+            rays_o,
+            rays_d,
+            sigma_fn=partial(sigma_fn, rays_o=rays_o, rays_d=rays_d),
+            near_plane=NEARPLANE,
+            far_plane=FARPLANE,
+            early_stop_eps=1e-4,
+            alpha_thre=1e-4,
+            render_step_size=RENDERSTEP
+            # early_stop_eps=1e-4, alpha_thre=1e-2,
+        )
+
+        assert ray_indices.shape[0] > 0, "estimator doesn't allow any sample points"
+
+        color, opacity, depth, extras = nerfacc.rendering(
+            t_starts,
+            t_ends,
+            ray_indices,
+            n_rays=rays_o.shape[0],
+            rgb_sigma_fn=partial(rgb_sigma_fn, rays_o=rays_o, rays_d=rays_d),
+        )
+
+        return color
+
     def xrender(self, t, frame_t):
         super().xrender(t, frame_t)
         self.render_xobjs()
-    
-        image, c2w = renderings[self.step//1 % len(renderings)]
+
+        image, c2w = renderings[self.step // 1 % len(renderings)]
         rays_o = ray.origins.reshape(-1, 3) + contraction(c2w[0, :3, 3], aabb)
         rays_d = (c2w[0, :3, :3] @ ray.directions.reshape(-1, 3).T).T
 
@@ -148,7 +217,7 @@ class Debug(Window):
                 occ_eval_fn=lambda x: field.query_density(x)["density"],
                 occ_thre=1e-2,
             )
-    
+
             # print(torch.nonzero(estimator.binaries).shape)
             ray_indices, t_starts, t_ends = estimator.sampling(
                 rays_o,
@@ -156,37 +225,74 @@ class Debug(Window):
                 sigma_fn=partial(sigma_fn, rays_o=rays_o, rays_d=rays_d),
                 near_plane=NEARPLANE,
                 far_plane=FARPLANE,
-                early_stop_eps=1e-4, alpha_thre=1e-2,
-                render_step_size = RENDERSTEP
+                early_stop_eps=1e-4,
+                alpha_thre=1e-4,
+                render_step_size=RENDERSTEP
                 # early_stop_eps=1e-4, alpha_thre=1e-2,
-
             )
-            
+
         assert ray_indices.shape[0] > 0, "estimator doesn't allow any sample points"
 
-        with self.debugviz() as (do_debug, ocamline, oaabb_axis, osample_points, wgrid_sample):
+        with self.debugviz() as (
+            do_debug,
+            ocamline,
+            oaabb_axis,
+            osample_points,
+            wgrid_sample,
+        ):
             if do_debug:
-                points_rayd = rays_d.detach().reshape(RES, RES, 3)[RES//2, RES//2].cpu().contiguous().numpy().astype("f4")
-                points_rayo = rays_o[[0]].detach().cpu().contiguous().numpy().astype("f4")
+                points_rayd = (
+                    rays_d.detach()
+                    .reshape(RES, RES, 3)[RES // 2, RES // 2]
+                    .cpu()
+                    .contiguous()
+                    .numpy()
+                    .astype("f4")
+                )
+                points_rayo = (
+                    rays_o[[0]].detach().cpu().contiguous().numpy().astype("f4")
+                )
 
-                ocamline.vbo.write(np.stack([points_rayo[0] + NEARPLANE, points_rayo[0] + FARPLANE * points_rayd]))
+                ocamline.vbo.write(
+                    np.stack(
+                        [
+                            points_rayo[0] + NEARPLANE,
+                            points_rayo[0] + FARPLANE * points_rayd,
+                        ]
+                    )
+                )
 
                 # if use cube grid:
                 if wgrid_sample():
-                    pts = torch.stack(
-                        torch.meshgrid(torch.linspace(0, 1, steps=32),
-                                    torch.linspace(0,1,steps=32),
-                                    torch.linspace(0,1,steps=32)), dim=-1).reshape(-1, 3).cuda()
-                else: # else use camera ray
-                    pts = rays_o[ray_indices] + rays_d[ray_indices] * (t_starts + t_ends)[:, None] / 2.0
+                    pts = (
+                        torch.stack(
+                            torch.meshgrid(
+                                torch.linspace(0, 1, steps=32),
+                                torch.linspace(0, 1, steps=32),
+                                torch.linspace(0, 1, steps=32),
+                            ),
+                            dim=-1,
+                        )
+                        .reshape(-1, 3)
+                        .cuda()
+                    )
+                else:  # else use camera ray
+                    pts = (
+                        rays_o[ray_indices]
+                        + rays_d[ray_indices] * (t_starts + t_ends)[:, None] / 2.0
+                    )
 
-                pts = torch.nn.functional.pad(pts, (0, 0, 0, 64*64*64 - len(pts)), mode='constant', value=-200) # pad with -200 so that the pad point will not be see
-                colors = torch.ones(pts.shape[0], 4, device=DEVICE) * field.query_density(pts)["density"]
+                pts = torch.nn.functional.pad(
+                    pts, (0, 0, 0, 64 * 64 * 64 - len(pts)), mode="constant", value=-200
+                )  # pad with -200 so that the pad point will not be see
+                colors = (
+                    torch.ones(pts.shape[0], 4, device=DEVICE)
+                    * field.query_density(pts)["density"]
+                )
 
                 # densities = field.query_density(pts)["density"]
                 osample_points.vbo.write(pts.detach().cpu().numpy().astype("f4"))
                 osample_points.cbo.write(colors.detach().cpu().numpy().astype("f4"))
-            
 
         if not self.wtrain():
             return
@@ -205,7 +311,7 @@ class Debug(Window):
             n_rays=rays_o.shape[0],
             rgb_sigma_fn=partial(rgb_sigma_fn, rays_o=rays_o, rays_d=rays_d),
         )
-          
+
         # Optimize: Both the network and rays will receive gradients
         optimizer.zero_grad()
         loss_map = l2(color, image.squeeze(0).permute(1, 2, 0).reshape(-1, 3)) * 1000
@@ -229,21 +335,27 @@ class Debug(Window):
         target = (target * 255).astype("u1")
 
         loss_map = loss_map.detach().reshape(RES, RES, 3).cpu().numpy() / 1000
-        loss_map = (loss_map * 255 + 25).clip(0, 255).astype("u1")
-
+        loss_map = (loss_map * 255).clip(0, 255).astype("u1")
 
         self.plane1.texture.write(hypo)
         self.plane2.texture.write(target)
         self.plane3.texture.write(loss_map)
+
+        self.plane4.texture.write(
+            (self.volrender(t, frame_t).detach().reshape(RES, RES, 3).cpu().numpy() * 255).astype("u1")
+        )
+
         changed, self.lr = imgui.slider_float(
-            "slide floats", self.lr,
-            min_value=0.0, max_value=lr_base*0.1,
-            format="%.8f"
+            "slide floats",
+            self.lr,
+            min_value=0.0,
+            max_value=lr_base * 0.1,
+            format="%.8f",
         )
         if imgui.button("confirm lr"):
             print(f"setting lr {self.lr}")
             for param_group in optimizer.param_groups:
-                param_group['lr'] = self.lr
+                param_group["lr"] = self.lr
         imgui.text(f"loss: {loss.item():.8f},sampled rays: {ray_indices.shape[0]}")
 
 
