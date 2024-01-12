@@ -61,30 +61,19 @@ class Window(WindowBase):
         xobj.center = center if center is not None else np.array([0, 0, 0])
         xobj.quat = quat if quat is not None else np.array([0, 0, 0, 1])
 
-        if xobj.center is not None:
-            mat = np.identity(4)
-            mat[:3, 3] = xobj.center
-            xobj.posemat = mat
-
         self.xobjs.append(xobj)
         return xobj
     
-    def setPoints(self, points, rgbs=None, center=None, quat=None, scale=None, name=None):
-        if rgbs is None:
-            rgbs = np.ones_like(points)
-
+    def setPoints(self, points, rgbs, center=None, quat=None, scale=None, name=None):
         if rgbs.shape[-1] == 3:
             rgbs = np.concatenate([rgbs, np.ones_like(rgbs[..., [0]])], axis=-1)
 
         xobj = XObj("points" + (f"_{name}" if name else ""))
         vao = VAO(mode=mgl.POINTS)
-        vbo = vao.buffer(np.array(points, dtype="f4"), "3f", "in_position")
-        cbo = vao.buffer(np.array(rgbs, dtype="f4"), "4f", "in_rgba")
+        vao.buffer(np.array(points, dtype="f4"), "3f", "in_position")
+        vao.buffer(np.array(rgbs, dtype="f4"), "4f", "in_rgba")
 
         xobj.bind_vao(vao)
-        xobj.bind_vbo(vbo)
-        xobj.bind_cbo(cbo)
-
         xobj.bind_prog(self.pcd_prog)
 
         xobj.scale = scale if scale is not None else np.array([1, 1, 1])
@@ -94,35 +83,22 @@ class Window(WindowBase):
         self.xobjs.append(xobj)
         return xobj
 
-    def setLines(self, vertices, rgbs=None):
-        """start point pair with end point"""
-        if rgbs is None:
-            rgbs = np.array([[1, 1, 1, 1]]).astype("f4").repeat(len(vertices),1)
-
-        if rgbs.shape[-1] == 3:
-            rgbs = np.concatenate([rgbs, np.ones_like(rgbs[..., [0]])], axis=-1)
-
+    def setGround(self, vertices=None, colors=None):
+        if vertices is None:
+            vertices = makeGround()
+        
+        if colors is None:
+            colors = np.array([[1, 1, 1, 1]]).astype("f4").repeat(len(vertices),1)
+    
         xobj = XObj("ground")
         vao = VAO(mode=mgl.LINES)
-        
-        vbo = vao.buffer(np.array(vertices, dtype="f4"), '3f', 'in_position')
-        cbo = vao.buffer(np.array(rgbs,  dtype="f4"), '4f', 'in_rgba')
-
-        xobj.bind_vbo(vbo)
-        xobj.bind_cbo(cbo)
+        vao.buffer(np.array(vertices, dtype="f4"), '3f', 'in_position')
+        vao.buffer(np.array(colors,  dtype="f4"), '4f', 'in_rgba')
         xobj.bind_vao(vao)
         xobj.bind_prog(self.pcd_prog)       
         self.xobjs.append(xobj)
         return xobj
 
-    def setGround(self, vertices=None, colors=None):
-        if vertices is None:
-            vertices = makeGround()
-
-        return self.setLines(vertices, colors)
-        
-
-    
 
     def key_event(self, key, action, modifiers):
         super().key_event(key, action, modifiers)
@@ -165,4 +141,4 @@ class Window(WindowBase):
 
     @classmethod
     def run(cls):
-        run_window_config(cls, args=["-wnd", "pygame2"])
+        run_window_config(cls)

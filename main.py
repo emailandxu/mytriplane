@@ -1,296 +1,368 @@
-# %%
-import torch
-
-from render.ray_marcher import MipRayMarcher2
-from render.renderer import ImportanceRenderer
-from render.ray_sampler import RaySampler
-from render.camera_utils import LookAtPoseSampler, FOV_to_intrinsics
-from networks.OSGDecoder import OSGDecoder
-from networks.superresolution import SuperresolutionHybrid8XDC
-
-
+from glgraphics import makeCoord, Window, makeGround, bool_widget
+import math
 import numpy as np
-from tqdm import tqdm, trange
-from pathlib import Path
-from matplotlib import pyplot as plt
+
+from moderngl import Context
+from raycam import to_pinhole, PinholeCamera, RayBundle
+import numpy as np
+import math
+from glgraphics import Window, makeCoord, makeGround, applyMat, rotate_x, rotate_y, lookAt
 from dataset import Renderings
-from torch.optim import Adam
+from field import TriMipRF
+import torch
+import nerfacc
+import torch.nn.functional as F
+from matplotlib import pyplot as plt
+from tqdm import trange
+import imgui
 from functools import partial
-from util import save_video
+from contextlib import contextmanager
 
-# %%
-import os
-
-os.environ["CUDA_VISIBLE_DEVICES"] = "2"
-normalize = lambda t: (t - t.mean()) / t.std()
-imagify = lambda t: (t.permute(0, 2, 3, 1) * 127.5 + 128).clamp(0, 255).to(torch.uint8)
-numpify = lambda t: t.squeeze(0).detach().cpu().numpy()
-show = lambda image: plt.imshow(numpify(imagify(image)))
-plt.show()
-
-
-class TriPlaneDecoder(torch.nn.Module):
-    def __init__(self, rendering_kwargs) -> None:
-        super().__init__()
-        self.decoder = OSGDecoder(
-            35,
-            {
-                "decoder_lr_mul": rendering_kwargs.get("decoder_lr_mul", 1),
-                "decoder_output_dim": 32,
-            },
-        ).cuda()
+DEVICE = "cuda"
+RES = 128
+NEARPLANE = 0.5
+FARPLANE = 3
+RENDERSTEP = 1e-2
+AABB = 0.5
+DATASET = "data/2d/the_order_of_the_white_eagle__cross"
+# DATASET = "data/2d/jupiter"
 
 
-        if (
-            rendering_kwargs["image_resolution"]
-            > rendering_kwargs["triplane_output_res"]
-        ):
-            self.supres = SuperresolutionHybrid8XDC(
-                channels=32,
-                img_resolution=512, # must be 512
-                sr_num_fp16_res=0,
-                sr_antialias=rendering_kwargs["sr_antialias"],
-            )
+renderings = Renderings(DATASET, resolution=RES, device=DEVICE).to_dataset(
+    flag_to_tensor=True
+)
+# torch.Size([1, 3, 64, 64]) torch.Size([1, 4, 4])
 
-            self.ws = torch.zeros((1, 14, 512), requires_grad=False)
-            self.supres = self.supres.cuda()
-            self.ws = self.ws.cuda()
-
-    def __call__(
-        self,
-        planes,
-        cam2world_matrix,
-        intrinsics,
-        ray_sampler,
-        renderer,
-        rendering_kwargs,
-    ):
-        triplane_output_res = rendering_kwargs.get("triplane_output_res")
-
-        ray_origins, ray_directions = ray_sampler(
-            cam2world_matrix, intrinsics, triplane_output_res
-        )
-        feature_samples, depth_samples, weights_samples = renderer(
-            planes, self.decoder, ray_origins, ray_directions, rendering_kwargs
-        )  # channels last
-
-        N, M, _ = ray_origins.shape
-        # Reshape into 'raw' neural-rendered image
-        H = W = triplane_output_res
-        feature_image = (
-            feature_samples.permute(0, 2, 1)
-            .reshape(N, feature_samples.shape[-1], H, W)
-            .contiguous()
-        )
-        depth_image = depth_samples.permute(0, 2, 1).reshape(N, 1, H, W)
-        rgb_image = feature_image[
-            :, :3
-        ]  # raw rgb images, rest chaneels are for super resolution
-
-        rgb_image = feature_image[:, :3]
-
-        if (
-            rendering_kwargs["image_resolution"]
-            > rendering_kwargs["triplane_output_res"]
-        ):
-            sr_image = self.supres(
-                rgb_image,
-                feature_image,
-                self.ws,
-                noise_mode=rendering_kwargs["superresolution_noise_mode"],
-            )
-            return sr_image, depth_image
-
-        return rgb_image, depth_image
+field = TriMipRF().cuda()
+ray: RayBundle = to_pinhole(fov=0.8575560548920328, res_w=RES, res_h=RES).build(DEVICE)
 
 
-def make_train():
-    from options import rendering_kwargs, dataset_kwargs
-
-    # make dataset
-    device = "cuda"
-    triplane_output_res = 128
-    renderings = Renderings(device=device, **dataset_kwargs)
-    dataset = renderings.to_dataset(flag_to_tensor=True)
-
-    # make render
-    # 1, 3, 32, 256, 256
-    planes = torch.randn(1, 3, 32, 256, 256, device=device, requires_grad=True)
-    triplane_decoder = TriPlaneDecoder(rendering_kwargs)
-    ray_sampler = RaySampler()
-    importance_renderer = ImportanceRenderer()
-    intrinsics = FOV_to_intrinsics(49.13434264120263, device=device).reshape(
-        -1, 3, 3
-    )  # 1, 3, 3
-
-    common_args = dict(
-        intrinsics=intrinsics,
-        ray_sampler=ray_sampler,
-        renderer=importance_renderer,
-        rendering_kwargs=rendering_kwargs,
+def sigma_fn(t_starts, t_ends, ray_indices, rays_o, rays_d):
+    """Define how to query density for the estimator."""
+    positions = (
+        rays_o[ray_indices] + rays_d[ray_indices] * (t_starts + t_ends)[:, None] / 2.0
     )
-    render = partial(triplane_decoder, planes, **common_args)
+    # print(positions, positions.max(), positions.min())
+    sigmas = field.query_density(x=positions)["density"]
+    # print(positions, sigmas)
+    return sigmas.squeeze(-1)  # (n_samples,) # sigmas must have shape of (N,)
 
-    # make optimizer
-    lr_base = 1e-1
-    lr_ramp = 0.001
-    maxiter = 150 * len(dataset)
-    optimizer = Adam([planes, *triplane_decoder.parameters()], lr=lr_base)
-    lr_lambda = lambda x: lr_ramp ** (float(x) / float(maxiter))
-    scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=lr_lambda)
 
-    l1 = lambda hypo, ref: (hypo - ref).abs()
-    l2 = lambda hypo, ref: (hypo - ref) ** 2
+def rgb_sigma_fn(t_starts, t_ends, ray_indices, rays_o, rays_d):
+    positions = (
+        rays_o[ray_indices] + rays_d[ray_indices] * (t_starts + t_ends)[:, None] / 2.0
+    )
+    res = field.query_density(
+        x=positions,
+        return_feat=True,
+    )
+    density, feature = res["density"], res["feature"]
+    rgb = field.query_rgb(dir=rays_d[ray_indices], embedding=feature)["rgb"]
+    return rgb, density.squeeze(-1)  # sigmas must have shape of (N,)
 
-    def train(early_stop=0):
-        progress = trange(maxiter)
-        for iter in progress:
-            j = np.random.randint(0, len(dataset))
-            # rgb_image, depth_image = render(planes, cam2world_matrix, intrinsics, resolutio)
-            image, cam2world_matrix = dataset[j]
-            rgb_image, depth_image = render(cam2world_matrix=cam2world_matrix)
-            loss_map = l1(rgb_image, image)
-            loss = loss_map.mean()
-            loss.backward()
-            progress.desc = f"loss: {loss.item():.4f}, lr:{lr_lambda(iter):.4f}"
 
-            optimizer.step()
-            scheduler.step()
-            optimizer.zero_grad()
+def contraction(x, aabb):
+    aabb_min, aabb_max = aabb[:3], aabb[3:]
+    x = (x - aabb_min) / (aabb_max - aabb_min)
+    return x
 
-            # if early_stop > 0 and iter*len(dataset) + j > early_stop:
-            if early_stop > 0 and iter > early_stop:
-                return render
-        return render
 
-    @torch.no_grad()
-    def render_video(cam2worlds, therender=None):
-        """if no parameter was given, it will use
-        the dataset cam2worlds, and the training render"""
-        if therender is None:
-            therender = render
+def save_pts(pts):
+    np.save("pts.npy", pts.detach().cpu().numpy())
 
-        images = np.stack(
-            [numpify(imagify(therender(cam2world)[0])) for cam2world in cam2worlds],
-            axis=0,
+def save_field():
+    torch.save(field.state_dict(), 'field.pt')
+
+def load_field():
+    field.load_state_dict(torch.load("field.pt"))
+
+aabb = torch.tensor([-AABB, -AABB, -AABB, AABB, AABB, AABB], device=DEVICE)
+estimator = nerfacc.OccGridEstimator(
+    roi_aabb=[0, 0, 0, 1, 1, 1]
+).cuda()  # due to nvdiffrast texture uv sample, it must be in 0-1
+
+lr_base = 1e-3
+lr_ramp = 0.00001
+lr_lambda = lambda x: lr_ramp ** (float(x) / float(10000))
+optimizer = torch.optim.Adam(
+    [
+        *field.parameters(),
+    ],
+    lr=lr_base,
+)
+# scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=lr_lambda)
+
+l1 = lambda hypo, ref: (hypo - ref).abs()
+l2 = lambda hypo, ref: (hypo - ref) ** 2
+
+progress = iter(trange(10000))
+
+
+class Debug(Window):
+    def __init__(
+        self,
+        ctx: "Context" = None,
+        wnd: "BaseWindow" = None,
+        timer: "BaseTimer" = None,
+        **kwargs,
+    ):
+        super().__init__(ctx, wnd, timer, **kwargs)
+        self.oworld_axis = self.setAxis(makeCoord() * 10)
+        # self.setGround(makeGround())
+        self.camera.eye = np.array([0, 1, 10], dtype="f4")
+        self.camera.fov = math.degrees(0.6911112070083618)
+        self.camera.dragable = False
+        # self.setPoints(np.load("pts.npy"))
+        self.plane1 = self.setPlane(
+            (np.zeros((RES, RES, 3)) * 255).astype("u1"), center=(1.1, 0, -3)
         )
-        return images
-    
-    @torch.no_grad()
-    def render_inter_video(save_path):
-        cam2worlds = [
-            LookAtPoseSampler.sample(
-                np.pi * factor * 8,
-                np.pi * (1 - factor),
-                torch.zeros(3).cuda(),
-                radius=1.5,
-                device="cuda",
+        self.plane2 = self.setPlane(
+            (np.zeros((RES, RES, 3)) * 255).astype("u1"), center=(-1.1, 0, -3)
+        )
+        self.plane3 = self.setPlane(
+            (np.zeros((RES, RES, 3)) * 255).astype("u1"), center=(-1.1, 2.1, -3)
+        )
+        self.plane4 = self.setPlane(
+            (np.zeros((RES, RES, 3)) * 255).astype("u1"), center=(1.1, 2.1, -3)
+        )
+
+        self.step = 0
+        self.lr = lr_base
+        self.wviz = bool_widget("viz", False)
+        self.wtrain = bool_widget("train", False)
+
+    @contextmanager
+    def debugviz(
+        self,
+    ):
+        do_debug = self.wviz()
+
+        if not hasattr(self, "osample_points"):
+            self.ocamline = self.setLines(
+                np.array([[0, 0, 0], [1, 2, 3]]), np.array([[0, 1, 0], [1, 0, 0]])
             )
-            for factor in tqdm(
-                np.linspace(0, 1, 300), desc="video rendering:", disable=True
+            self.oaabb_axis = self.setAxis(
+                contraction(makeCoord() / (AABB * 2), aabb.cpu().numpy())
             )
-        ]
+            self.osample_points = self.setPoints(np.zeros((64 * 64 * 64, 3)))
+            self.wgrid_sample = bool_widget("grid_sample", True)
 
-        images = render_video(cam2worlds)
-        # print("encoding video..")
-        save_video(images, f"{save_path}", *images.shape[1:3], fps=30)
+        self.ocamline.visible = do_debug
+        self.oaabb_axis.visible = do_debug
+        self.osample_points.visible = do_debug
+        self.oworld_axis.visible = do_debug
+
+        yield (
+            do_debug,
+            self.ocamline,
+            self.oaabb_axis,
+            self.osample_points,
+            self.wgrid_sample,
+        )
+
+        self.ocamline.visible = do_debug
+        self.oaabb_axis.visible = do_debug
+        self.osample_points.visible = do_debug
 
     @torch.no_grad()
-    def render_dataset_video(save_path):
-        cam2worlds = []
-        target_images = []
-        for target_image, cam2world in dataset:
-            # list of w, h, 3
-            target_images.append(numpify(imagify(target_image)))
-            cam2worlds.append(cam2world)
-
-        # t, w, h, 3
-        target_images = np.stack(target_images, axis=0)
-        # t, w, h, 3
-        images = render_video(cam2worlds)
-        # t, w * 2, h, 3
-        images = np.concatenate([images, target_images], axis=1)
-        # images = target_images
-        # print(images.shape)
-        save_video(images, f"{save_path}", *images.shape[1:3], fps=5)
-
-    def post_train():
-        dataset_name = os.path.basename(dataset_kwargs["rootdir"])
-        render_dataset_video(f"data/videos/{dataset_name}.mp4")
-        torch.save(
-            triplane_decoder.state_dict(), f"data/models/decoder_{dataset_name}.pt"
+    def volrender(self, t, frame_t):
+        w2c = lookAt(
+            eye=applyMat(rotate_x(t) @ rotate_y(t), np.array([1, 1, 1])) + np.array([0.5, 0.5, 0.5]),
+            at=np.array([0.5, 0.5, 0.5]),
+            up=np.array([0, 1, 0]),
         )
-        np.save(f"data/models/planes_{dataset_name}.npy", planes.cpu().detach().numpy())
+        c2w = np.linalg.inv(w2c)
+        c2w = torch.from_numpy(c2w).cuda()
 
-    def restore():
-        dataset_name = os.path.basename(dataset_kwargs["rootdir"])
-        triplane_decoder.load_state_dict(
-            torch.load(f"data/models/decoder_{dataset_name}.pt")
+        rays_o = ray.origins.reshape(-1, 3) + c2w[:3, 3]
+        rays_d = (c2w[:3, :3] @ ray.directions.reshape(-1, 3).T).T
+        # print(torch.nonzero(estimator.binaries).shape)
+        ray_indices, t_starts, t_ends = estimator.sampling(
+            rays_o,
+            rays_d,
+            sigma_fn=partial(sigma_fn, rays_o=rays_o, rays_d=rays_d),
+            near_plane=0.1,
+            far_plane=FARPLANE,
+            early_stop_eps=1e-2,
+            alpha_thre=1e-2,
+            render_step_size=RENDERSTEP
+            # early_stop_eps=1e-4, alpha_thre=1e-2,
         )
-        # for inplace assignment
-        with torch.no_grad():
-            planes[:] = torch.from_numpy(
-                np.load(f"data/models/planes_{dataset_name}.npy")
-            ).cuda()
-        return render
+
+        imgui.text(f"ray indices:{ray_indices.shape[0]}")
+
+        color, opacity, depth, extras = nerfacc.rendering(
+            t_starts,
+            t_ends,
+            ray_indices,
+            n_rays=rays_o.shape[0],
+            rgb_sigma_fn=partial(rgb_sigma_fn, rays_o=rays_o, rays_d=rays_d),
+        )
+
+        return color
+
+    def xrender(self, t, frame_t):
+        super().xrender(t, frame_t)
+        self.render_xobjs()
+        if imgui.button("load"):
+            load_field()
+        imgui.same_line()
+        if imgui.button("save"):
+            save_field()
+            
+        image, c2w = renderings[self.step // 1 % len(renderings)]
+        rays_o = ray.origins.reshape(-1, 3) + contraction(c2w[0, :3, 3], aabb)
+        rays_d = (c2w[0, :3, :3] @ ray.directions.reshape(-1, 3).T).T
+        estimator.update_every_n_steps(
+            step=self.step,
+            occ_eval_fn=lambda x: field.query_density(x)["density"],
+            occ_thre=1e-2,
+        )
+
+        # print(torch.nonzero(estimator.binaries).shape)
+        ray_indices, t_starts, t_ends = estimator.sampling(
+            rays_o,
+            rays_d,
+            sigma_fn=partial(sigma_fn, rays_o=rays_o, rays_d=rays_d),
+            near_plane=NEARPLANE,
+            far_plane=FARPLANE,
+            early_stop_eps=1e-4,
+            alpha_thre=1e-4,
+            render_step_size=RENDERSTEP,
+            stratified=True
+            # early_stop_eps=1e-4, alpha_thre=1e-2,
+        )
+
+        assert ray_indices.shape[0] > 0, "estimator doesn't allow any sample points"
+        
+        self.plane4.texture.write(
+            (self.volrender(t, frame_t).detach().reshape(RES, RES, 3).cpu().numpy() * 255).astype("u1")
+        )
+
+        with self.debugviz() as (
+            do_debug,
+            ocamline,
+            oaabb_axis,
+            osample_points,
+            wgrid_sample,
+        ):
+            if do_debug:
+                points_rayd = (
+                    rays_d.detach()
+                    .reshape(RES, RES, 3)[RES // 2, RES // 2]
+                    .cpu()
+                    .contiguous()
+                    .numpy()
+                    .astype("f4")
+                )
+                points_rayo = (
+                    rays_o[[0]].detach().cpu().contiguous().numpy().astype("f4")
+                )
+
+                ocamline.vbo.write(
+                    np.stack(
+                        [
+                            points_rayo[0] + NEARPLANE,
+                            points_rayo[0] + FARPLANE * points_rayd,
+                        ]
+                    )
+                )
+
+                # if use cube grid:
+                if wgrid_sample():
+                    pts = (
+                        torch.stack(
+                            torch.meshgrid(
+                                torch.linspace(0, 1, steps=32),
+                                torch.linspace(0, 1, steps=32),
+                                torch.linspace(0, 1, steps=32),
+                            ),
+                            dim=-1,
+                        )
+                        .reshape(-1, 3)
+                        .cuda()
+                    )
+                else:  # else use camera ray
+                    pts = (
+                        rays_o[ray_indices]
+                        + rays_d[ray_indices] * (t_starts + t_ends)[:, None] / 2.0
+                    )
+
+                pts = torch.nn.functional.pad(
+                    pts, (0, 0, 0, 64 * 64 * 64 - len(pts)), mode="constant", value=-200
+                )  # pad with -200 so that the pad point will not be see
+                colors = (
+                    torch.ones(pts.shape[0], 4, device=DEVICE)
+                    * field.query_density(pts)["density"]
+                )
+
+                # densities = field.query_density(pts)["density"]
+                osample_points.vbo.write(pts.detach().cpu().numpy().astype("f4"))
+                osample_points.cbo.write(colors.detach().cpu().numpy().astype("f4"))
+
+        if not self.wtrain():
+            field.training = False
+            return
+        else:
+            field.training = True
+
     
-    @torch.no_grad()
-    def view_rays(cam2world):
-        ray_origins, ray_directions = ray_sampler(
-            cam2world, intrinsics, triplane_output_res
+        try:
+            self.step = step = next(progress)
+        except StopIteration:
+            return
+
+        # Differentiable Volumetric Rendering.
+        # colors: (n_rays, 3). opaicity: (n_rays, 1). depth: (n_rays, 1).
+        color, opacity, depth, extras = nerfacc.rendering(
+            t_starts,
+            t_ends,
+            ray_indices,
+            n_rays=rays_o.shape[0],
+            rgb_sigma_fn=partial(rgb_sigma_fn, rays_o=rays_o, rays_d=rays_d),
         )
-        depths_coarse = importance_renderer.make_depth_coarse(
-            ray_origins, ray_directions, rendering_kwargs
+
+        # Optimize: Both the network and rays will receive gradients
+        optimizer.zero_grad()
+        loss_map = l2(color, image.squeeze(0).permute(1, 2, 0).reshape(-1, 3)) * 1000
+        loss = loss_map.mean()
+        loss.backward()
+        optimizer.step()
+        # scheduler.step()
+
+        hypo = color.detach().reshape(RES, RES, 3).cpu().numpy()
+        hypo = (hypo * 255).astype("u1")
+
+        target = (
+            image.squeeze(0)
+            .permute(1, 2, 0)
+            .reshape(-1, 3)
+            .detach()
+            .reshape(RES, RES, 3)
+            .cpu()
+            .numpy()
         )
-        # Coarse Pass
-        batch_size, num_rays, samples_per_ray, _ = depths_coarse.shape
-        sample_coordinates = (
-            ray_origins.unsqueeze(-2) + depths_coarse * ray_directions.unsqueeze(-2)
-        ).reshape(batch_size, -1, 3)
-        sample_directions = (
-            ray_directions.unsqueeze(-2)
-            .expand(-1, -1, samples_per_ray, -1)
-            .reshape(batch_size, -1, 3)
+        target = (target * 255).astype("u1")
+
+        loss_map = loss_map.detach().reshape(RES, RES, 3).cpu().numpy() / 1000
+        loss_map = (loss_map * 255).clip(0, 255).astype("u1")
+
+        self.plane1.texture.write(hypo)
+        self.plane2.texture.write(target)
+        self.plane3.texture.write(loss_map)
+
+        changed, self.lr = imgui.slider_float(
+            "slide floats",
+            self.lr,
+            min_value=0.0,
+            max_value=lr_base * 0.1,
+            format="%.8f",
         )
-        return depths_coarse, sample_coordinates, sample_directions
-    @torch.no_grad()
-    def view_volume(cam2world):
-        depths_coarse, sample_coordinates, sample_directions = view_rays(cam2world)
-        out = importance_renderer.run_model(
-            planes,
-            triplane_decoder.decoder,
-            sample_coordinates,
-            sample_directions,
-            rendering_kwargs,
-        )
-        colors_coarse, densities_coarse = out["rgb"], out["sigma"]
-        return colors_coarse, densities_coarse
-
-    return {
-        "train": train,
-        "post_train": post_train,
-        "restore": restore,
-        "dataset": lambda: dataset,
-        "common_args": lambda: common_args,
-        "view_rays": view_rays,
-        "view_volume": view_volume,
-        "render_inter_video": render_inter_video,
-        "render_dataset_video": render_dataset_video,
-    }
+        if imgui.button("confirm lr"):
+            print(f"setting lr {self.lr}")
+            for param_group in optimizer.param_groups:
+                param_group["lr"] = self.lr
+        imgui.text(f"loss: {loss.item():.8f},sampled rays: {ray_indices.shape[0]}")
 
 
-# %%
-
-if __name__ == "__main__":
-    train_meta = make_train()
-    try:
-        train_meta["train"]()
-    except KeyboardInterrupt as e:
-        pass
-
-    train_meta["post_train"]()
-    train_meta["restore"]()
-    train_meta["render_dataset_video"]("dataset.mp4")
-    train_meta["render_inter_video"]("inter.mp4")
-
-# %%
+Debug.run()
