@@ -30,3 +30,6 @@ it will render the the 3d glb model into data/2d/example
 ```
 python main.py
 ```
+
+## Reference
+[Tri-MipRF](https://wbhu.github.io/projects/Tri-MipRF/)
