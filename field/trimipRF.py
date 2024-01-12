@@ -19,13 +19,11 @@ class TriMipRF(nn.Module):
         net_depth_base: int = 2,
         net_depth_color: int = 4,
         net_width: int = 128,
-        density_activation: Callable = lambda x: trunc_exp(x - 1),
     ) -> None:
         super().__init__()
         self.plane_size = plane_size
         self.log2_plane_size = math.log2(plane_size)
         self.geo_feat_dim = geo_feat_dim
-        self.density_activation = density_activation
 
         self.encoding = TriMipEncoding(n_levels, plane_size, feature_dim)
         self.direction_encoding = tcnn.Encoding(
@@ -57,6 +55,8 @@ class TriMipRF(nn.Module):
                 "n_hidden_layers": net_depth_color,
             },
         )
+    def density_activation(self, x):
+        return trunc_exp(x - 1)
 
     def query_density(
         self, x: Tensor, return_feat: bool = False

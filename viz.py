@@ -24,7 +24,7 @@ NEARPLANE = 0.5
 FARPLANE = 3
 RENDERSTEP = 1e-2
 AABB = 0.5
-DATASET = "data/2d/sculpture_bust_of_roza_loewenfeld"
+DATASET = "data/2d/the_order_of_the_white_eagle__cross"
 # DATASET = "data/2d/jupiter"
 
 
@@ -70,6 +70,11 @@ def contraction(x, aabb):
 def save_pts(pts):
     np.save("pts.npy", pts.detach().cpu().numpy())
 
+def save_field():
+    torch.save(field.state_dict(), 'field.pt')
+
+def load_field():
+    field.load_state_dict(torch.load("field.pt"))
 
 aabb = torch.tensor([-AABB, -AABB, -AABB, AABB, AABB, AABB], device=DEVICE)
 estimator = nerfacc.OccGridEstimator(
@@ -109,22 +114,22 @@ class Debug(Window):
         self.camera.dragable = False
         # self.setPoints(np.load("pts.npy"))
         self.plane1 = self.setPlane(
-            (np.random.rand(*(RES, RES, 3)) * 255).astype("u1"), center=(1.1, 0, -3)
+            (np.zeros((RES, RES, 3)) * 255).astype("u1"), center=(1.1, 0, -3)
         )
         self.plane2 = self.setPlane(
-            (np.random.rand(*(RES, RES, 3)) * 255).astype("u1"), center=(-1.1, 0, -3)
+            (np.zeros((RES, RES, 3)) * 255).astype("u1"), center=(-1.1, 0, -3)
         )
         self.plane3 = self.setPlane(
-            (np.random.rand(*(RES, RES, 3)) * 255).astype("u1"), center=(-1.1, 2.1, -3)
+            (np.zeros((RES, RES, 3)) * 255).astype("u1"), center=(-1.1, 2.1, -3)
         )
         self.plane4 = self.setPlane(
-            (np.random.rand(*(RES, RES, 3)) * 255).astype("u1"), center=(1.1, 2.1, -3)
+            (np.zeros((RES, RES, 3)) * 255).astype("u1"), center=(1.1, 2.1, -3)
         )
 
         self.step = 0
         self.lr = lr_base
         self.wviz = bool_widget("viz", False)
-        self.wtrain = bool_widget("train", True)
+        self.wtrain = bool_widget("train", False)
 
     @contextmanager
     def debugviz(
@@ -171,27 +176,20 @@ class Debug(Window):
 
         rays_o = ray.origins.reshape(-1, 3) + c2w[:3, 3]
         rays_d = (c2w[:3, :3] @ ray.directions.reshape(-1, 3).T).T
-
-        # estimator.update_every_n_steps(
-        #     step=self.step,
-        #     occ_eval_fn=lambda x: field.query_density(x)["density"],
-        #     occ_thre=1e-2,
-        # )
-
         # print(torch.nonzero(estimator.binaries).shape)
         ray_indices, t_starts, t_ends = estimator.sampling(
             rays_o,
             rays_d,
             sigma_fn=partial(sigma_fn, rays_o=rays_o, rays_d=rays_d),
-            near_plane=NEARPLANE,
+            near_plane=0.1,
             far_plane=FARPLANE,
-            early_stop_eps=1e-4,
-            alpha_thre=1e-4,
+            early_stop_eps=1e-2,
+            alpha_thre=1e-2,
             render_step_size=RENDERSTEP
             # early_stop_eps=1e-4, alpha_thre=1e-2,
         )
 
-        assert ray_indices.shape[0] > 0, "estimator doesn't allow any sample points"
+        imgui.text(f"ray indices:{ray_indices.shape[0]}")
 
         color, opacity, depth, extras = nerfacc.rendering(
             t_starts,
@@ -206,32 +204,40 @@ class Debug(Window):
     def xrender(self, t, frame_t):
         super().xrender(t, frame_t)
         self.render_xobjs()
-
+        if imgui.button("load"):
+            load_field()
+        imgui.same_line()
+        if imgui.button("save"):
+            save_field()
+            
         image, c2w = renderings[self.step // 1 % len(renderings)]
         rays_o = ray.origins.reshape(-1, 3) + contraction(c2w[0, :3, 3], aabb)
         rays_d = (c2w[0, :3, :3] @ ray.directions.reshape(-1, 3).T).T
+        estimator.update_every_n_steps(
+            step=self.step,
+            occ_eval_fn=lambda x: field.query_density(x)["density"],
+            occ_thre=1e-2,
+        )
 
-        with torch.no_grad():
-            estimator.update_every_n_steps(
-                step=self.step,
-                occ_eval_fn=lambda x: field.query_density(x)["density"],
-                occ_thre=1e-2,
-            )
-
-            # print(torch.nonzero(estimator.binaries).shape)
-            ray_indices, t_starts, t_ends = estimator.sampling(
-                rays_o,
-                rays_d,
-                sigma_fn=partial(sigma_fn, rays_o=rays_o, rays_d=rays_d),
-                near_plane=NEARPLANE,
-                far_plane=FARPLANE,
-                early_stop_eps=1e-4,
-                alpha_thre=1e-4,
-                render_step_size=RENDERSTEP
-                # early_stop_eps=1e-4, alpha_thre=1e-2,
-            )
+        # print(torch.nonzero(estimator.binaries).shape)
+        ray_indices, t_starts, t_ends = estimator.sampling(
+            rays_o,
+            rays_d,
+            sigma_fn=partial(sigma_fn, rays_o=rays_o, rays_d=rays_d),
+            near_plane=NEARPLANE,
+            far_plane=FARPLANE,
+            early_stop_eps=1e-4,
+            alpha_thre=1e-4,
+            render_step_size=RENDERSTEP,
+            stratified=True
+            # early_stop_eps=1e-4, alpha_thre=1e-2,
+        )
 
         assert ray_indices.shape[0] > 0, "estimator doesn't allow any sample points"
+        
+        self.plane4.texture.write(
+            (self.volrender(t, frame_t).detach().reshape(RES, RES, 3).cpu().numpy() * 255).astype("u1")
+        )
 
         with self.debugviz() as (
             do_debug,
@@ -295,8 +301,12 @@ class Debug(Window):
                 osample_points.cbo.write(colors.detach().cpu().numpy().astype("f4"))
 
         if not self.wtrain():
+            field.training = False
             return
+        else:
+            field.training = True
 
+    
         try:
             self.step = step = next(progress)
         except StopIteration:
@@ -340,10 +350,6 @@ class Debug(Window):
         self.plane1.texture.write(hypo)
         self.plane2.texture.write(target)
         self.plane3.texture.write(loss_map)
-
-        self.plane4.texture.write(
-            (self.volrender(t, frame_t).detach().reshape(RES, RES, 3).cpu().numpy() * 255).astype("u1")
-        )
 
         changed, self.lr = imgui.slider_float(
             "slide floats",

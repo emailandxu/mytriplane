@@ -75,6 +75,7 @@ class FPSCamera(CameraBase):
     def debug_gui(self, t, frame_t):
         import imgui
         from ..widgets import float_widget
+        imgui.begin("camera")
         self.frame_t = frame_t
         if not hasattr(self, "wspeed"):
             self.wspeed = float_widget("speed", 0.01, 1, 0.1)
@@ -89,3 +90,4 @@ class FPSCamera(CameraBase):
         imgui.text(f"{self.eye.astype('f2')}")
         imgui.text(f"{np.rad2deg(self.theta):.4f}, {np.rad2deg(self.phi):.4f}")
         imgui.text(f"{self.eye - self.oriental}")
+        imgui.end()
