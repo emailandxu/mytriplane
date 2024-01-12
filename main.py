@@ -24,8 +24,7 @@ NEARPLANE = 0.5
 FARPLANE = 3
 RENDERSTEP = 1e-2
 AABB = 0.5
-DATASET = "data/2d/the_order_of_the_white_eagle__cross"
-# DATASET = "data/2d/jupiter"
+DATASET = "data/2d/example"
 
 
 renderings = Renderings(DATASET, resolution=RES, device=DEVICE).to_dataset(
@@ -129,7 +128,7 @@ class Debug(Window):
         self.step = 0
         self.lr = lr_base
         self.wviz = bool_widget("viz", False)
-        self.wtrain = bool_widget("train", False)
+        self.wtrain = bool_widget("train", True)
 
     @contextmanager
     def debugviz(
