@@ -19,12 +19,15 @@ from functools import partial
 from contextlib import contextmanager
 
 DEVICE = "cuda"
-RES = 256
+PLANE_SIZE = 64
+PLANE_FEAT = 16
+RES = 128
+PREVIEW_RES = 128
 NEARPLANE = 1.0
 FARPLANE = 2.7
-RENDERSTEP = (FARPLANE - NEARPLANE) / 96
+RENDERSTEP = (FARPLANE - NEARPLANE) / 92
 AABB = 0.5
-DATASET = "data/2d/sculpture_bust_of_roza_loewenfeld"
+DATASET = "data/2d/jupiter"
 
 
 renderings = Renderings(DATASET, resolution=RES, device=DEVICE).to_dataset(
@@ -32,8 +35,9 @@ renderings = Renderings(DATASET, resolution=RES, device=DEVICE).to_dataset(
     flag_random_background=True,
 )
 # torch.Size([1, 3, 64, 64]) torch.Size([1, 4, 4])
-
-field = TriMipRF().cuda()
+planes = torch.empty(3, PLANE_SIZE, PLANE_SIZE, PLANE_FEAT, device=DEVICE, requires_grad=True)
+torch.nn.init.uniform_(planes, -1e-2, 1e-2)
+field = TriMipRF(planes=planes, plane_size=PLANE_SIZE, feature_dim=PLANE_FEAT).cuda()
 
 def sigma_fn(t_starts, t_ends, ray_indices, rays_o, rays_d):
     """Define how to query density for the estimator."""
@@ -41,7 +45,7 @@ def sigma_fn(t_starts, t_ends, ray_indices, rays_o, rays_d):
         rays_o[ray_indices] + rays_d[ray_indices] * (t_starts + t_ends)[:, None] / 2.0
     )
     # print(positions, positions.max(), positions.min())
-    sigmas = field.query_density(x=positions)["density"]
+    sigmas = field.query_density(x=positions, planes=planes)["density"]
     # print(positions, sigmas)
     return sigmas.squeeze(-1)  # (n_samples,) # sigmas must have shape of (N,)
 
@@ -52,6 +56,7 @@ def rgb_sigma_fn(t_starts, t_ends, ray_indices, rays_o, rays_d):
     )
     res = field.query_density(
         x=positions,
+        planes=planes,
         return_feat=True,
     )
     density, feature = res["density"], res["feature"]
@@ -63,7 +68,6 @@ def contraction(x, aabb):
     aabb_min, aabb_max = aabb[:3], aabb[3:]
     x = (x - aabb_min) / (aabb_max - aabb_min)
     return x
-
 
 def save_pts(pts):
     np.save("pts.npy", pts.detach().cpu().numpy())
@@ -85,6 +89,7 @@ lr_lambda = lambda x: lr_ramp ** (float(x) / float(10000))
 optimizer = torch.optim.Adam(
     [
         *field.parameters(),
+        planes
     ],
     lr=lr_base,
 )
@@ -93,7 +98,6 @@ optimizer = torch.optim.Adam(
 l1 = lambda hypo, ref: (hypo - ref).abs()
 l2 = lambda hypo, ref: (hypo - ref) ** 2
 
-progress = iter(trange(10000))
 
 
 class Debug(Window):
@@ -121,10 +125,11 @@ class Debug(Window):
             (np.zeros((RES, RES, 3)) * 255).astype("u1"), center=(-1.1, 2.1, -3)
         )
         self.plane4 = self.setPlane(
-            (np.zeros((RES//2, RES//2, 3)) * 255).astype("u1"), center=(1.1, 2.1, -3)
+            (np.zeros((PREVIEW_RES, PREVIEW_RES, 3)) * 255).astype("u1"), center=(1.1, 2.1, -3)
         )
 
         self.step = 0
+        self.progress = iter(trange(10000))
         self.lr = lr_base
         self.wviz = bool_widget("viz", False)
         self.wtrain = bool_widget("train", True)
@@ -172,7 +177,7 @@ class Debug(Window):
         c2w = np.linalg.inv(w2c)
         c2w = torch.from_numpy(c2w).cuda()
 
-        ray = to_pinhole(fov=0.8575560548920328, res_w=RES//2, res_h=RES//2).build(DEVICE)
+        ray = to_pinhole(fov=0.8575560548920328, res_w=PREVIEW_RES, res_h=PREVIEW_RES).build(DEVICE)
         rays_o = ray.origins.reshape(-1, 3) + c2w[:3, 3]
         rays_d = (c2w[:3, :3] @ ray.directions.reshape(-1, 3).T).T
         # print(torch.nonzero(estimator.binaries).shape)
@@ -209,7 +214,11 @@ class Debug(Window):
         imgui.same_line()
         if imgui.button("save"):
             save_field()
-            
+        imgui.same_line()
+        if imgui.button("reset"):
+            planes.data = torch.zeros_like(planes)
+            self.progress = iter(trange(10000))
+
         image, background, c2w = renderings[self.step // 1 % len(renderings)]
 
         ray: RayBundle = to_pinhole(fov=0.8575560548920328, res_w=RES, res_h=RES).build(DEVICE)
@@ -217,7 +226,7 @@ class Debug(Window):
         rays_d = (c2w[0, :3, :3] @ ray.directions.reshape(-1, 3).T).T
         estimator.update_every_n_steps(
             step=self.step,
-            occ_eval_fn=lambda x: field.query_density(x)["density"],
+            occ_eval_fn=lambda x: field.query_density(x, planes=planes)["density"],
             occ_thre=1e-2,
         )
 
@@ -238,7 +247,7 @@ class Debug(Window):
         assert ray_indices.shape[0] > 0, "estimator doesn't allow any sample points"
         
         self.plane4.texture.write(
-            (self.test_render(t, frame_t).detach().reshape(RES//2, RES//2, 3).cpu().numpy() * 255).astype("u1")
+            (self.test_render(t, frame_t).detach().reshape(PREVIEW_RES, PREVIEW_RES, 3).cpu().numpy() * 255).astype("u1")
         )
 
         with self.debugviz() as (
@@ -251,7 +260,7 @@ class Debug(Window):
             if do_debug:
                 center_point_rayd = (
                     rays_d.detach()
-                    .reshape(RES, RES, 3)[RES // 2, RES // 2] #center point
+                    .reshape(RES, RES, 3)[PREVIEW_RES, PREVIEW_RES] #center point
                     .cpu()
                     .contiguous()
                     .numpy()
@@ -295,7 +304,7 @@ class Debug(Window):
                 )  # pad with -200 so that the pad point will not be see
                 colors = (
                     torch.ones(pts.shape[0], 4, device=DEVICE)
-                    * field.query_density(pts)["density"]
+                    * field.query_density(pts, planes=planes)["density"]
                 )
 
                 # densities = field.query_density(pts)["density"]
@@ -310,7 +319,7 @@ class Debug(Window):
 
     
         try:
-            self.step = step = next(progress)
+            self.step = step = next(self.progress)
         except StopIteration:
             return
 

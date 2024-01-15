@@ -13,6 +13,7 @@ class TriMipRF(nn.Module):
     def __init__(
         self,
         n_levels: int = 0,
+        planes = None,
         plane_size: int = 512,
         feature_dim: int = 16,
         geo_feat_dim: int = 15,
@@ -56,16 +57,18 @@ class TriMipRF(nn.Module):
                 "n_hidden_layers": net_depth_color,
             },
         )
+
     def density_activation(self, x):
         return trunc_exp(x - 1)
 
     def query_density(
-        self, x: Tensor, return_feat: bool = False
+        self, x: Tensor, planes:Tensor, return_feat: bool = False
     ):
         # print("query_density", x.shape)
         selector = ((x > 0.0) & (x < 1.0)).all(dim=-1)
         enc = self.encoding(
             x.view(-1, 3),
+            planes
             # level=level.view(-1, 1),
         )
         x = (

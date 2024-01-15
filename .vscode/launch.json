@@ -6,10 +6,10 @@
     "configurations": [
     {"name":"Python: Remote Attach","type":"python","request":"attach","connect":{"host":"localhost","port":5678},"pathMappings":[{"localRoot":"${workspaceFolder}","remoteRoot":"."}],"justMyCode":true},
         {
-            "name":"Python: Current File",
+            "name":"main",
             "type":"python",
             "request":"launch",
-            "program":"${file}",
+            "program":"main.py",
             "console":"integratedTerminal",
             "justMyCode":true,
             "env":{

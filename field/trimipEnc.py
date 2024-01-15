@@ -18,18 +18,19 @@ class TriMipEncoding(nn.Module):
         self.feature_dim = feature_dim
         self.include_xyz = include_xyz
 
-        self.register_parameter(
-            "fm",
-            nn.Parameter(torch.zeros(3, plane_size, plane_size, feature_dim)),
-        )
-        self.init_parameters()
+        # self.register_parameter(
+        #     "fm",
+        #     nn.Parameter(torch.zeros(3, plane_size, plane_size, feature_dim)),
+        # )
+        # self.init_parameters()
         self.dim_out = self.feature_dim * 3 + 3 if include_xyz else self.feature_dim * 3
 
     def init_parameters(self) -> None:
         # Important for performance
         nn.init.uniform_(self.fm, -1e-2, 1e-2)
 
-    def forward(self, x, level=None):
+    def forward(self, x, fm, level=None):
+
         # x in [0,1], level in [0,max_level]
         # x is Nx3, level is Nx1
         if 0 == x.shape[0]:
@@ -63,7 +64,7 @@ class TriMipEncoding(nn.Module):
             enc = torch.concat(
                 [
                     nvdiffrast.torch.texture(
-                        self.fm,
+                        fm,
                         decomposed_x[:, indices[index-1] : indices[index]].contiguous(),
                         mip_level_bias=level,
                         boundary_mode="clamp",
@@ -78,7 +79,7 @@ class TriMipEncoding(nn.Module):
 
         else:
             enc = nvdiffrast.torch.texture(
-                self.fm,
+                fm,
                 decomposed_x,
                 mip_level_bias=level,
                 boundary_mode="clamp",
