@@ -19,22 +19,21 @@ from functools import partial
 from contextlib import contextmanager
 
 DEVICE = "cuda"
-RES = 128
-NEARPLANE = 0.5
+RES = 256
+NEARPLANE = 0.1
 FARPLANE = 3
-RENDERSTEP = 1e-2
+RENDERSTEP = 5e-2
 AABB = 0.5
-DATASET = "data/2d/example"
+DATASET = "data/2d/free_iphone_13_pro_2021"
 
 
 renderings = Renderings(DATASET, resolution=RES, device=DEVICE).to_dataset(
-    flag_to_tensor=True
+    flag_to_tensor=True,
+    flag_random_background=True,
 )
 # torch.Size([1, 3, 64, 64]) torch.Size([1, 4, 4])
 
 field = TriMipRF().cuda()
-ray: RayBundle = to_pinhole(fov=0.8575560548920328, res_w=RES, res_h=RES).build(DEVICE)
-
 
 def sigma_fn(t_starts, t_ends, ray_indices, rays_o, rays_d):
     """Define how to query density for the estimator."""
@@ -122,7 +121,7 @@ class Debug(Window):
             (np.zeros((RES, RES, 3)) * 255).astype("u1"), center=(-1.1, 2.1, -3)
         )
         self.plane4 = self.setPlane(
-            (np.zeros((RES, RES, 3)) * 255).astype("u1"), center=(1.1, 2.1, -3)
+            (np.zeros((RES//2, RES//2, 3)) * 255).astype("u1"), center=(1.1, 2.1, -3)
         )
 
         self.step = 0
@@ -173,6 +172,7 @@ class Debug(Window):
         c2w = np.linalg.inv(w2c)
         c2w = torch.from_numpy(c2w).cuda()
 
+        ray = to_pinhole(fov=0.8575560548920328, res_w=RES//2, res_h=RES//2).build(DEVICE)
         rays_o = ray.origins.reshape(-1, 3) + c2w[:3, 3]
         rays_d = (c2w[:3, :3] @ ray.directions.reshape(-1, 3).T).T
         # print(torch.nonzero(estimator.binaries).shape)
@@ -180,25 +180,26 @@ class Debug(Window):
             rays_o,
             rays_d,
             sigma_fn=partial(sigma_fn, rays_o=rays_o, rays_d=rays_d),
-            near_plane=0.1,
+            near_plane=NEARPLANE,
             far_plane=FARPLANE,
             early_stop_eps=1e-2,
             alpha_thre=1e-2,
-            render_step_size=RENDERSTEP
+            render_step_size=RENDERSTEP*0.05,
+            stratified=False
             # early_stop_eps=1e-4, alpha_thre=1e-2,
         )
 
         imgui.text(f"ray indices:{ray_indices.shape[0]}")
+        with torch.no_grad():
+            color, opacity, depth, extras = nerfacc.rendering(
+                t_starts,
+                t_ends,
+                ray_indices,
+                n_rays=rays_o.shape[0],
+                rgb_sigma_fn=partial(rgb_sigma_fn, rays_o=rays_o, rays_d=rays_d),
+            )
 
-        color, opacity, depth, extras = nerfacc.rendering(
-            t_starts,
-            t_ends,
-            ray_indices,
-            n_rays=rays_o.shape[0],
-            rgb_sigma_fn=partial(rgb_sigma_fn, rays_o=rays_o, rays_d=rays_d),
-        )
-
-        return color
+            return color
 
     def xrender(self, t, frame_t):
         super().xrender(t, frame_t)
@@ -209,7 +210,9 @@ class Debug(Window):
         if imgui.button("save"):
             save_field()
             
-        image, c2w = renderings[self.step // 1 % len(renderings)]
+        image, background, c2w = renderings[self.step // 1 % len(renderings)]
+
+        ray: RayBundle = to_pinhole(fov=0.8575560548920328, res_w=RES, res_h=RES).build(DEVICE)
         rays_o = ray.origins.reshape(-1, 3) + contraction(c2w[0, :3, 3], aabb)
         rays_d = (c2w[0, :3, :3] @ ray.directions.reshape(-1, 3).T).T
         estimator.update_every_n_steps(
@@ -235,7 +238,7 @@ class Debug(Window):
         assert ray_indices.shape[0] > 0, "estimator doesn't allow any sample points"
         
         self.plane4.texture.write(
-            (self.volrender(t, frame_t).detach().reshape(RES, RES, 3).cpu().numpy() * 255).astype("u1")
+            (self.volrender(t, frame_t).detach().reshape(RES//2, RES//2, 3).cpu().numpy() * 255).astype("u1")
         )
 
         with self.debugviz() as (
@@ -319,6 +322,7 @@ class Debug(Window):
             ray_indices,
             n_rays=rays_o.shape[0],
             rgb_sigma_fn=partial(rgb_sigma_fn, rays_o=rays_o, rays_d=rays_d),
+            render_bkgd=background
         )
 
         # Optimize: Both the network and rays will receive gradients

@@ -45,7 +45,8 @@ class TriMipRF(nn.Module):
             },
         )
         self.mlp_head = tcnn.Network(
-            n_input_dims=self.direction_encoding.n_output_dims + geo_feat_dim,
+            n_input_dims=self.direction_encoding.n_output_dims + geo_feat_dim, # with direction
+            # n_input_dims=geo_feat_dim, # without direction
             n_output_dims=3,
             network_config={
                 "otype": "FullyFusedMLP",
@@ -88,7 +89,8 @@ class TriMipRF(nn.Module):
         # dir in [-1,1]
         dir = (dir + 1.0) / 2.0  # SH encoding must be in the range [0, 1]
         d = self.direction_encoding(dir.view(-1, dir.shape[-1]))
-        h = torch.cat([d, embedding.view(-1, self.geo_feat_dim)], dim=-1)
+        h = torch.cat([d, embedding.view(-1, self.geo_feat_dim)], dim=-1) # with direction
+        # h = embedding.view(-1, self.geo_feat_dim) # without direction
         rgb = (
             self.mlp_head(h)
             .view(list(embedding.shape[:-1]) + [3])

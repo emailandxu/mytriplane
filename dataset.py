@@ -27,34 +27,40 @@ class Renderings():
         self.resize = lambda img : cv2.resize(img, (resolution, resolution))
         self.paired_paths = list(zip(sorted(pngs), sorted(npys)))
     
-    def get(self, idx, flag_resize=True, flag_alphablend=False, flag_matrix_3x4=False, flag_to_tensor=False):
+    def get(self, idx, flag_resize=True,  flag_matrix_3x4=False, flag_to_tensor=False, flag_random_background=False):
         pngpath, npypath = self.paired_paths[idx]
         # print(pngpath, npypath)
 
         image, extrinsic = imgread(pngpath), np.load(npypath)
-        extrinsic[:3, :3] = extrinsic[:3, :3] # @ rotate_x(-np.pi)[:3, :3]
+
+        image = image / 255
         
         if flag_resize:
             image = self.resize(image)
 
-        if flag_alphablend:
-            image = image[..., :3] * image[..., [3]] # multiply alpha
+        if flag_random_background:
+            opacity = image[..., [3]]
+            background = np.random.rand(3)
+            image = image[..., :3] * opacity  + ( background * (1-opacity))
         else:
-            image = image[..., :3]
+            opacity = image[..., [3]]
+            background = np.zeros((3))
+            image = image[..., :3] * opacity  + ( background * (1-opacity))
 
         if flag_matrix_3x4:
             extrinsic = np.concatenate([extrinsic, np.array([[0, 0, 0, 1]])], axis=0)
 
         # unsqueeze and to channel first tensor
-        image = image / 255
         image = image[np.newaxis, :].astype("f4").transpose(0, 3, 1, 2) # 1 x 3 x 512 x 512 
+        # background = background[np.newaxis, :].astype("f4").transpose(0, 3, 1, 2) # 1 x 1 x 512 x 512 
         extrinsic = extrinsic[np.newaxis, :].astype("f4") # 1 x 4 x 4
 
         if flag_to_tensor:
             image = torch.from_numpy(image).to(self.device)
+            background = torch.from_numpy(background).to(self.device)
             extrinsic = torch.from_numpy(extrinsic).to(self.device)
 
-        return image, extrinsic
+        return image, background, extrinsic
     
     def __len__(self):
         return len(self.paired_paths)
