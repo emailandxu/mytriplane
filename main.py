@@ -22,7 +22,7 @@ DEVICE = "cuda"
 RES = 256
 NEARPLANE = 0.1
 FARPLANE = 3
-RENDERSTEP = 5e-2
+RENDERSTEP = 1e-2
 AABB = 0.5
 DATASET = "data/2d/free_iphone_13_pro_2021"
 
