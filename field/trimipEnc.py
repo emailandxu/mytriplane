@@ -50,27 +50,41 @@ class TriMipEncoding(nn.Module):
             level = torch.broadcast_to(level, decomposed_x.shape[:3]).contiguous()
         # print(decomposed_x.min(), decomposed_x.max())
 
-        parts = 8
-        partion = decomposed_x.shape[1] // parts
-        indices = [partion * i for i in range(parts+1)]
-        if decomposed_x.shape[1] % parts != 0:
-            indices.append(None)
+        SAMPLE_POINT_CHANNEL = 1
+        if decomposed_x.shape[SAMPLE_POINT_CHANNEL] > 1e6:
+            # nvdiffrast texture doesn't support high resolution texture mapping
+            # so I seperate the uv into 10 parts and concate the sampling feature
+            parts = 10
+            partion = decomposed_x.shape[SAMPLE_POINT_CHANNEL] // parts
+            indices = [partion * i for i in range(parts+1)]
+            if decomposed_x.shape[SAMPLE_POINT_CHANNEL] % parts != 0:
+                indices.append(None)
 
-        enc = torch.concat(
-            [
-                nvdiffrast.torch.texture(
-                    self.fm,
-                    decomposed_x[:, indices[index-1] : indices[index]].contiguous(),
-                    mip_level_bias=level,
-                    boundary_mode="clamp",
-                    max_mip_level=self.n_levels - 1 if self.n_levels > 0 else None,
-                )  # 3xNx1xC
-                for index in range(1, len(indices))
-            ],
-            dim=1,
-        )
+            enc = torch.concat(
+                [
+                    nvdiffrast.torch.texture(
+                        self.fm,
+                        decomposed_x[:, indices[index-1] : indices[index]].contiguous(),
+                        mip_level_bias=level,
+                        boundary_mode="clamp",
+                        max_mip_level=self.n_levels - 1 if self.n_levels > 0 else None,
+                    )  # 3xNx1xC
+                    for index in range(1, len(indices))
+                ],
+                dim=SAMPLE_POINT_CHANNEL,
+            )
 
-        assert enc.shape[1] == decomposed_x.shape[1]
+            assert enc.shape[SAMPLE_POINT_CHANNEL] == decomposed_x.shape[SAMPLE_POINT_CHANNEL]
+
+        else:
+            enc = nvdiffrast.torch.texture(
+                self.fm,
+                decomposed_x,
+                mip_level_bias=level,
+                boundary_mode="clamp",
+                max_mip_level=self.n_levels - 1 if self.n_levels > 0 else None,
+            )  # 3xNx1xC
+
 
         enc = (
             enc.permute(1, 2, 0, 3)

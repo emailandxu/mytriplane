@@ -20,11 +20,11 @@ from contextlib import contextmanager
 
 DEVICE = "cuda"
 RES = 256
-NEARPLANE = 0.1
-FARPLANE = 3
-RENDERSTEP = 1e-2
+NEARPLANE = 1.0
+FARPLANE = 2.7
+RENDERSTEP = (FARPLANE - NEARPLANE) / 96
 AABB = 0.5
-DATASET = "data/2d/free_iphone_13_pro_2021"
+DATASET = "data/2d/sculpture_bust_of_roza_loewenfeld"
 
 
 renderings = Renderings(DATASET, resolution=RES, device=DEVICE).to_dataset(
@@ -163,7 +163,7 @@ class Debug(Window):
         self.osample_points.visible = do_debug
 
     @torch.no_grad()
-    def volrender(self, t, frame_t):
+    def test_render(self, t, frame_t):
         w2c = lookAt(
             eye=applyMat(rotate_x(t) @ rotate_y(t), np.array([1, 1, 1])) + np.array([0.5, 0.5, 0.5]),
             at=np.array([0.5, 0.5, 0.5]),
@@ -184,7 +184,7 @@ class Debug(Window):
             far_plane=FARPLANE,
             early_stop_eps=1e-2,
             alpha_thre=1e-2,
-            render_step_size=RENDERSTEP*0.05,
+            render_step_size=RENDERSTEP / 2,
             stratified=False
             # early_stop_eps=1e-4, alpha_thre=1e-2,
         )
@@ -238,7 +238,7 @@ class Debug(Window):
         assert ray_indices.shape[0] > 0, "estimator doesn't allow any sample points"
         
         self.plane4.texture.write(
-            (self.volrender(t, frame_t).detach().reshape(RES//2, RES//2, 3).cpu().numpy() * 255).astype("u1")
+            (self.test_render(t, frame_t).detach().reshape(RES//2, RES//2, 3).cpu().numpy() * 255).astype("u1")
         )
 
         with self.debugviz() as (
@@ -249,23 +249,23 @@ class Debug(Window):
             wgrid_sample,
         ):
             if do_debug:
-                points_rayd = (
+                center_point_rayd = (
                     rays_d.detach()
-                    .reshape(RES, RES, 3)[RES // 2, RES // 2]
+                    .reshape(RES, RES, 3)[RES // 2, RES // 2] #center point
                     .cpu()
                     .contiguous()
                     .numpy()
                     .astype("f4")
                 )
-                points_rayo = (
+                point_rayo = (
                     rays_o[[0]].detach().cpu().contiguous().numpy().astype("f4")
                 )
 
                 ocamline.vbo.write(
                     np.stack(
                         [
-                            points_rayo[0] + NEARPLANE,
-                            points_rayo[0] + FARPLANE * points_rayd,
+                            point_rayo + NEARPLANE,
+                            point_rayo + FARPLANE * center_point_rayd,
                         ]
                     )
                 )
