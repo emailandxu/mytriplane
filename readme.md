@@ -1,5 +1,4 @@
-
-# H3D Triplane
+# H3D Triplane NeRF
 
 This is an nerf implentation using Triplane with a debug view that can visualize the sample points along the rays.
 
