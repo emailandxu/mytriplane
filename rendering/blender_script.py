@@ -819,10 +819,10 @@ def render_object(
     for i in range(num_renders):
         # set camera
         camera = randomize_camera(
-            radius_min=2.2,
-            radius_max=2.7,
-            # radius_min=1.5,
-            # radius_max=2.2,
+            # radius_min=2.2,
+            # radius_max=2.7,
+            radius_min=1.5,
+            radius_max=2.2,
             only_northern_hemisphere=only_northern_hemisphere,
         )
 

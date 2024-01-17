@@ -6,14 +6,6 @@ import torch
 from typing import Callable
 from functools import partial
 
-def rotate_x(a):
-    s, c = np.sin(a), np.cos(a)
-    return np.array([[1,  0, 0, 0], 
-                     [0,  c, s, 0], 
-                     [0, -s, c, 0], 
-                     [0,  0, 0, 1]]).astype(np.float32)
-
-
 class Renderings():
     def __init__(self, rootdir, resolution=64, device="cpu", **kwargs) -> None:
         """
@@ -86,7 +78,7 @@ if __name__ == "__main__":
     from options import dataset_kwargs
     from functools import partial
     
-    renderings = Renderings(**dataset_kwargs)
+    renderings = Renderings("data/2d/sculpture")
     # get =renderings.get
 
     img, extr = renderings.get(0)

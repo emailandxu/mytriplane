@@ -3,30 +3,19 @@
 
 This is an nerf implentation using Triplane with a debug view that can visualize the sample points along the rays.
 
+![Vase Training](data/attachment/vase_training.png)
 
-## Enviorment
-to do
-## How to Run?
-### First
+## 1. Render Dataset From GLB
 
-place a glb model into data/3d/example.glb.
+place **YOUR** glb model into ```data/3d/example.glb```
 
-### Second
 ```
-# to rendering directory
 cd rendering
-
-# download blender for rendering
-wget https://download.blender.org/release/Blender3.2/blender-3.2.2-linux-x64.tar.xz && \
-tar -xf blender-3.2.2-linux-x64.tar.xz && \
-rm blender-3.2.2-linux-x64.tar.xz
-
-# render
-sh render.sh
+sh render.sh example
 ```
-it will render the the 3d glb model into data/2d/example
+it will render the the 3d glb model into ```data/2d/example```
 
-### Third
+## 2. Train
 ```
 python main.py
 ```

@@ -35,39 +35,57 @@ NEARPLANE = 1.0
 FARPLANE = 2.7
 RENDERSTEP = (FARPLANE - NEARPLANE) / 92
 AABB = 0.5
-DATASET = "data/2d/sculpture"
+DATASET = "data/2d/example"
 
 
-renderings = Renderings(DATASET, resolution=RES, device=DEVICE).to_dataset(
+dataset = Renderings(DATASET, resolution=RES, device=DEVICE).to_dataset(
     flag_to_tensor=True,
     flag_random_background=True,
 )
-# torch.Size([1, 3, 64, 64]) torch.Size([1, 4, 4])
-planes = torch.empty(
-    3, PLANE_SIZE, PLANE_SIZE, PLANE_FEAT, device=DEVICE, requires_grad=True
+
+field = TriMipRF(
+    plane_size=PLANE_SIZE,
+    feature_dim=PLANE_FEAT,
+    planes_as_parameters=True,
+).cuda()
+
+# the renderings aabb
+aabb = torch.tensor([-AABB, -AABB, -AABB, AABB, AABB, AABB], device=DEVICE)
+estimator = nerfacc.OccGridEstimator(
+    roi_aabb=[0, 0, 0, 1, 1, 1]
+).cuda()  # due to nvdiffrast texture uv sample, it must be in 0-1
+
+# optimizer
+lr_base = 1e-3
+lr_ramp = 0.00001
+lr_lambda = lambda x: lr_ramp ** (float(x) / float(10000))
+optimizer = torch.optim.Adam(
+    [*field.parameters()],
+    lr=lr_base,
 )
-torch.nn.init.uniform_(planes, -1e-2, 1e-2)
-field = TriMipRF(planes=planes, plane_size=PLANE_SIZE, feature_dim=PLANE_FEAT).cuda()
+
+# loss function
+l1 = lambda hypo, ref: (hypo - ref).abs()
+l2 = lambda hypo, ref: (hypo - ref) ** 2
 
 
-def sigma_fn(t_starts, t_ends, ray_indices, rays_o, rays_d):
+def sigma_fn(t_starts, t_ends, ray_indices, rays_o, rays_d, field):
     """Define how to query density for the estimator."""
     positions = (
         rays_o[ray_indices] + rays_d[ray_indices] * (t_starts + t_ends)[:, None] / 2.0
     )
     # print(positions, positions.max(), positions.min())
-    sigmas = field.query_density(x=positions, planes=planes)["density"]
+    sigmas = field.query_density(x=positions)["density"]
     # print(positions, sigmas)
     return sigmas.squeeze(-1)  # (n_samples,) # sigmas must have shape of (N,)
 
 
-def rgb_sigma_fn(t_starts, t_ends, ray_indices, rays_o, rays_d):
+def rgb_sigma_fn(t_starts, t_ends, ray_indices, rays_o, rays_d, field):
     positions = (
         rays_o[ray_indices] + rays_d[ray_indices] * (t_starts + t_ends)[:, None] / 2.0
     )
     res = field.query_density(
         x=positions,
-        planes=planes,
         return_feat=True,
     )
     density, feature = res["density"], res["feature"]
@@ -80,36 +98,16 @@ def contraction(x, aabb):
     x = (x - aabb_min) / (aabb_max - aabb_min)
     return x
 
-
 def save_pts(pts):
     np.save("pts.npy", pts.detach().cpu().numpy())
 
 
-def save_field():
+def save_field(field):
     torch.save(field.state_dict(), "field.pt")
 
 
-def load_field():
+def load_field(field):
     field.load_state_dict(torch.load("field.pt"))
-
-
-aabb = torch.tensor([-AABB, -AABB, -AABB, AABB, AABB, AABB], device=DEVICE)
-estimator = nerfacc.OccGridEstimator(
-    roi_aabb=[0, 0, 0, 1, 1, 1]
-).cuda()  # due to nvdiffrast texture uv sample, it must be in 0-1
-
-lr_base = 1e-3
-lr_ramp = 0.00001
-lr_lambda = lambda x: lr_ramp ** (float(x) / float(10000))
-optimizer = torch.optim.Adam(
-    [*field.parameters(), planes],
-    lr=lr_base,
-)
-# scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=lr_lambda)
-
-l1 = lambda hypo, ref: (hypo - ref).abs()
-l2 = lambda hypo, ref: (hypo - ref) ** 2
-
 
 class Debug(Window):
     def __init__(
@@ -199,7 +197,7 @@ class Debug(Window):
         ray_indices, t_starts, t_ends = estimator.sampling(
             rays_o,
             rays_d,
-            sigma_fn=partial(sigma_fn, rays_o=rays_o, rays_d=rays_d),
+            sigma_fn=partial(sigma_fn, rays_o=rays_o, rays_d=rays_d, field=field),
             near_plane=NEARPLANE,
             far_plane=FARPLANE,
             early_stop_eps=1e-2,
@@ -216,7 +214,7 @@ class Debug(Window):
                 t_ends,
                 ray_indices,
                 n_rays=rays_o.shape[0],
-                rgb_sigma_fn=partial(rgb_sigma_fn, rays_o=rays_o, rays_d=rays_d),
+                rgb_sigma_fn=partial(rgb_sigma_fn, rays_o=rays_o, rays_d=rays_d, field=field),
             )
 
             return color
@@ -225,16 +223,16 @@ class Debug(Window):
         super().xrender(t, frame_t)
         self.render_xobjs()
         if imgui.button("load"):
-            load_field()
+            load_field(field)
         imgui.same_line()
         if imgui.button("save"):
-            save_field()
+            save_field(field)
         imgui.same_line()
         if imgui.button("reset"):
-            planes.data = torch.zeros_like(planes)
+            field.planes.data = torch.zeros_like(field.planes.data)
             self.progress = iter(trange(10000))
 
-        image, background, c2w = renderings[self.step // 1 % len(renderings)]
+        image, background, c2w = dataset[self.step // 1 % len(dataset)]
 
         ray: RayBundle = to_pinhole(fov=0.8575560548920328, res_w=RES, res_h=RES).build(
             DEVICE
@@ -243,7 +241,7 @@ class Debug(Window):
         rays_d = (c2w[0, :3, :3] @ ray.directions.reshape(-1, 3).T).T
         estimator.update_every_n_steps(
             step=self.step,
-            occ_eval_fn=lambda x: field.query_density(x, planes=planes)["density"],
+            occ_eval_fn=lambda x: field.query_density(x)["density"],
             occ_thre=1e-2,
         )
 
@@ -251,7 +249,7 @@ class Debug(Window):
         ray_indices, t_starts, t_ends = estimator.sampling(
             rays_o,
             rays_d,
-            sigma_fn=partial(sigma_fn, rays_o=rays_o, rays_d=rays_d),
+            sigma_fn=partial(sigma_fn, rays_o=rays_o, rays_d=rays_d, field=field),
             near_plane=NEARPLANE,
             far_plane=FARPLANE,
             early_stop_eps=1e-4,
@@ -329,7 +327,7 @@ class Debug(Window):
                 )  # pad with -200 so that the pad point will not be see
                 colors = (
                     torch.ones(pts.shape[0], 4, device=DEVICE)
-                    * field.query_density(pts, planes=planes)["density"]
+                    * field.query_density(pts)["density"]
                 )
 
                 # densities = field.query_density(pts)["density"]
@@ -354,7 +352,7 @@ class Debug(Window):
             t_ends,
             ray_indices,
             n_rays=rays_o.shape[0],
-            rgb_sigma_fn=partial(rgb_sigma_fn, rays_o=rays_o, rays_d=rays_d),
+            rgb_sigma_fn=partial(rgb_sigma_fn, rays_o=rays_o, rays_d=rays_d, field=field),
             render_bkgd=background,
         )
 
