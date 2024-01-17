@@ -5,10 +5,10 @@ blender-3.2.2-linux-x64/blender \
 blender_script.py \
 -- \
 --object_path \
-"/data1/xushuli/git-repo/mytriplane/data/3d/$1.glb" \
+"../data/3d/$1.glb" \
 --num_renders \
 36 \
 --output_dir \
-"/data1/xushuli/git-repo/mytriplane/data/2d/$1" \
+"../data/2d/$1" \
 --engine \
 BLENDER_EEVEE
