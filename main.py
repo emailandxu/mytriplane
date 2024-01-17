@@ -6,7 +6,15 @@ from moderngl import Context
 from raycam import to_pinhole, PinholeCamera, RayBundle
 import numpy as np
 import math
-from glgraphics import Window, makeCoord, makeGround, applyMat, rotate_x, rotate_y, lookAt
+from glgraphics import (
+    Window,
+    makeCoord,
+    makeGround,
+    applyMat,
+    rotate_x,
+    rotate_y,
+    lookAt,
+)
 from dataset import Renderings
 from field import TriMipRF
 import torch
@@ -19,7 +27,7 @@ from functools import partial
 from contextlib import contextmanager
 
 DEVICE = "cuda"
-PLANE_SIZE = 64
+PLANE_SIZE = 92
 PLANE_FEAT = 16
 RES = 128
 PREVIEW_RES = 128
@@ -27,7 +35,7 @@ NEARPLANE = 1.0
 FARPLANE = 2.7
 RENDERSTEP = (FARPLANE - NEARPLANE) / 92
 AABB = 0.5
-DATASET = "data/2d/jupiter"
+DATASET = "data/2d/sculpture"
 
 
 renderings = Renderings(DATASET, resolution=RES, device=DEVICE).to_dataset(
@@ -35,9 +43,12 @@ renderings = Renderings(DATASET, resolution=RES, device=DEVICE).to_dataset(
     flag_random_background=True,
 )
 # torch.Size([1, 3, 64, 64]) torch.Size([1, 4, 4])
-planes = torch.empty(3, PLANE_SIZE, PLANE_SIZE, PLANE_FEAT, device=DEVICE, requires_grad=True)
+planes = torch.empty(
+    3, PLANE_SIZE, PLANE_SIZE, PLANE_FEAT, device=DEVICE, requires_grad=True
+)
 torch.nn.init.uniform_(planes, -1e-2, 1e-2)
 field = TriMipRF(planes=planes, plane_size=PLANE_SIZE, feature_dim=PLANE_FEAT).cuda()
+
 
 def sigma_fn(t_starts, t_ends, ray_indices, rays_o, rays_d):
     """Define how to query density for the estimator."""
@@ -69,14 +80,18 @@ def contraction(x, aabb):
     x = (x - aabb_min) / (aabb_max - aabb_min)
     return x
 
+
 def save_pts(pts):
     np.save("pts.npy", pts.detach().cpu().numpy())
 
+
 def save_field():
-    torch.save(field.state_dict(), 'field.pt')
+    torch.save(field.state_dict(), "field.pt")
+
 
 def load_field():
     field.load_state_dict(torch.load("field.pt"))
+
 
 aabb = torch.tensor([-AABB, -AABB, -AABB, AABB, AABB, AABB], device=DEVICE)
 estimator = nerfacc.OccGridEstimator(
@@ -87,17 +102,13 @@ lr_base = 1e-3
 lr_ramp = 0.00001
 lr_lambda = lambda x: lr_ramp ** (float(x) / float(10000))
 optimizer = torch.optim.Adam(
-    [
-        *field.parameters(),
-        planes
-    ],
+    [*field.parameters(), planes],
     lr=lr_base,
 )
 # scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=lr_lambda)
 
 l1 = lambda hypo, ref: (hypo - ref).abs()
 l2 = lambda hypo, ref: (hypo - ref) ** 2
-
 
 
 class Debug(Window):
@@ -125,7 +136,8 @@ class Debug(Window):
             (np.zeros((RES, RES, 3)) * 255).astype("u1"), center=(-1.1, 2.1, -3)
         )
         self.plane4 = self.setPlane(
-            (np.zeros((PREVIEW_RES, PREVIEW_RES, 3)) * 255).astype("u1"), center=(1.1, 2.1, -3)
+            (np.zeros((PREVIEW_RES, PREVIEW_RES, 3)) * 255).astype("u1"),
+            center=(1.1, 2.1, -3),
         )
 
         self.step = 0
@@ -170,14 +182,17 @@ class Debug(Window):
     @torch.no_grad()
     def test_render(self, t, frame_t):
         w2c = lookAt(
-            eye=applyMat(rotate_x(t) @ rotate_y(t), np.array([1, 1, 1])) + np.array([0.5, 0.5, 0.5]),
+            eye=applyMat(rotate_x(t) @ rotate_y(t), np.array([1, 1, 1]))
+            + np.array([0.5, 0.5, 0.5]),
             at=np.array([0.5, 0.5, 0.5]),
             up=np.array([0, 1, 0]),
         )
         c2w = np.linalg.inv(w2c)
         c2w = torch.from_numpy(c2w).cuda()
 
-        ray = to_pinhole(fov=0.8575560548920328, res_w=PREVIEW_RES, res_h=PREVIEW_RES).build(DEVICE)
+        ray = to_pinhole(
+            fov=0.8575560548920328, res_w=PREVIEW_RES, res_h=PREVIEW_RES
+        ).build(DEVICE)
         rays_o = ray.origins.reshape(-1, 3) + c2w[:3, 3]
         rays_d = (c2w[:3, :3] @ ray.directions.reshape(-1, 3).T).T
         # print(torch.nonzero(estimator.binaries).shape)
@@ -221,7 +236,9 @@ class Debug(Window):
 
         image, background, c2w = renderings[self.step // 1 % len(renderings)]
 
-        ray: RayBundle = to_pinhole(fov=0.8575560548920328, res_w=RES, res_h=RES).build(DEVICE)
+        ray: RayBundle = to_pinhole(fov=0.8575560548920328, res_w=RES, res_h=RES).build(
+            DEVICE
+        )
         rays_o = ray.origins.reshape(-1, 3) + contraction(c2w[0, :3, 3], aabb)
         rays_d = (c2w[0, :3, :3] @ ray.directions.reshape(-1, 3).T).T
         estimator.update_every_n_steps(
@@ -245,9 +262,16 @@ class Debug(Window):
         )
 
         assert ray_indices.shape[0] > 0, "estimator doesn't allow any sample points"
-        
+
         self.plane4.texture.write(
-            (self.test_render(t, frame_t).detach().reshape(PREVIEW_RES, PREVIEW_RES, 3).cpu().numpy() * 255).astype("u1")
+            (
+                self.test_render(t, frame_t)
+                .detach()
+                .reshape(PREVIEW_RES, PREVIEW_RES, 3)
+                .cpu()
+                .numpy()
+                * 255
+            ).astype("u1")
         )
 
         with self.debugviz() as (
@@ -258,9 +282,10 @@ class Debug(Window):
             wgrid_sample,
         ):
             if do_debug:
+                center_index = RES // 2
                 center_point_rayd = (
                     rays_d.detach()
-                    .reshape(RES, RES, 3)[PREVIEW_RES, PREVIEW_RES] #center point
+                    .reshape(RES, RES, 3)[center_index, center_index]  # center point
                     .cpu()
                     .contiguous()
                     .numpy()
@@ -317,7 +342,6 @@ class Debug(Window):
         else:
             field.training = True
 
-    
         try:
             self.step = step = next(self.progress)
         except StopIteration:
@@ -331,7 +355,7 @@ class Debug(Window):
             ray_indices,
             n_rays=rays_o.shape[0],
             rgb_sigma_fn=partial(rgb_sigma_fn, rays_o=rays_o, rays_d=rays_d),
-            render_bkgd=background
+            render_bkgd=background,
         )
 
         # Optimize: Both the network and rays will receive gradients
