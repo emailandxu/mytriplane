@@ -7,15 +7,16 @@ This is an nerf implentation using Triplane with a debug view that can visualize
 
 ## 1. Render Dataset From GLB
 
-place **YOUR** glb model into ```data/3d/example.glb```
+Place **YOUR** glb model into ```data/3d/example.glb```, it will render the the 3d glb model into ```data/2d/example```, detail in [here](rendering/README.md).
 
 ```
 cd rendering
 sh render.sh example
 ```
-it will render the the 3d glb model into ```data/2d/example```
+
 
 ## 2. Train
+The hyper paramters are located in the top lines of main.py.
 ```
 python main.py
 ```
