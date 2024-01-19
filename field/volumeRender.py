@@ -101,12 +101,15 @@ class VolumeRender(torch.nn.Module):
         colors = []
 
         for idx, (rays_o, rays_d) in enumerate(zip(batched_rays_o, batched_rays_d)):
+            the_planes = planes[idx] if planes is not None else planes
+            the_background = background[idx] if background is not None else background
+            
             if update_estimator and self.training:
                 self.step += 1
 
                 def occ_eval_fn(x):
                     # breakpoint()
-                    return self.field.query_density(x, planes=planes[idx])["density"]
+                    return self.field.query_density(x, planes=the_planes)["density"]
 
                 self.estimator.update_every_n_steps(
                     step=self.step,  # set to 0 update immediately
@@ -122,7 +125,7 @@ class VolumeRender(torch.nn.Module):
                     self._sigma_fn,
                     rays_o=rays_o,
                     rays_d=rays_d,
-                    planes=planes[idx],
+                    planes=the_planes,
                     field=self.field,
                 ),
                 near_plane=near,
@@ -145,10 +148,10 @@ class VolumeRender(torch.nn.Module):
                     self._rgb_sigma_fn,
                     rays_o=rays_o,
                     rays_d=rays_d,
-                    planes=planes[idx],
+                    planes=the_planes,
                     field=self.field,
                 ),
-                render_bkgd=background[idx],
+                render_bkgd=the_background,
             )
             colors.append(color)
         return torch.stack(colors)

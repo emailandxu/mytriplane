@@ -38,11 +38,11 @@ class Renderings:
 
         if flag_random_background:
             opacity = image[..., [3]]
-            background = np.random.rand(3)
+            background = np.random.rand(1, 3)
             image = image[..., :3] * opacity + (background * (1 - opacity))
         else:
             opacity = image[..., [3]]
-            background = np.zeros((3))
+            background = np.zeros((1, 3))
             image = image[..., :3] * opacity + (background * (1 - opacity))
 
         # unsqueeze and to channel first tensor
