@@ -32,11 +32,12 @@ import wandb
 
 # %%
 FOV = 0.8575560548920328
-RES = 256
+RES = 128
 LR = 1e-5
-STEPS = 1000
+STEPS = 7000
+BATCH_SIZE = 5
 
-wandb.init(project="mytriplane-generative-init", config=dict(res=RES, lr=LR, steps=STEPS))
+wandb.init(project="mytriplane-generative-batched", config=dict(res=RES, lr=LR, steps=STEPS))
 
 
 # %%
@@ -91,51 +92,61 @@ progress = trange(STEPS)
 loss_hist = []
 
 # %%
-try:
-    for i in progress:
-        dataset = datasets[i // 10 % len(datasets)]
-        image_0, background, c2w_0 = dataset[0]
-        image, background, c2w = dataset[i % len(dataset)]
-        # torch.Size([1, 3, 40, 64, 64])
-        planes = (
-            generator.forward_planes(image_0, to_camera(c2w))
-            .squeeze(0)
-            .permute(0, 2, 3, 1)
-            .contiguous()
-        )
-        color = volume_render.forward(
-            c2w, res=RES, fov=FOV, planes=planes, background=background, far=3
+for i in progress:
+    temps = []
+    for _ in range(BATCH_SIZE):
+        dataset = datasets[np.random.randint(0, len(datasets))]
+        _image_0, _, _c2w_0 = dataset[0]
+        _image, _background, _c2w = dataset[np.random.randint(1, len(dataset))]
+        temps.append(
+            [_image_0, _c2w_0, _image, _background.unsqueeze(0), _c2w]
         )
 
-        optimizer.zero_grad()
-        loss_map = l2(color, image.squeeze(0).permute(1, 2, 0).reshape(-1, 3)) * 1000
-        loss = loss_map.mean()
-        loss.backward()
-        optimizer.step()
+    image_0 = torch.concat([temp[0] for temp in temps], dim=0)
+    c2w_0 = torch.concat([temp[1] for temp in temps], dim=0)
+    image = torch.concat([temp[2] for temp in temps], dim=0)
+    background = torch.concat([temp[3] for temp in temps], dim=0)
+    c2w = torch.concat([temp[4] for temp in temps], dim=0)
 
-        loss_hist.append(loss.item())
-        wandb.log(dict(loss=loss.item()))
-        progress.desc = f"{loss.item():.4f}"
+    N = c2w.shape[0] # batch size
+    # torch.Size([1, 3, 40, 64, 64])
 
-        if i % 10 == 0:
-            with torch.no_grad():
-                wandb.log(
-                    dict(
-                        input_image=wandb.Image(
-                            image_0.squeeze(0).permute(1, 2, 0).cpu().numpy()
-                        ),
-                        target_image=wandb.Image(
-                            image.squeeze(0).permute(1, 2, 0).cpu().numpy()
-                        ),
-                        hypo_image=wandb.Image(
-                            color.reshape(RES, RES, 3).detach().cpu().numpy()
-                        ),
-                    )
+    # channel first, N, 3, C, W, H
+    planes = generator.forward_planes(image_0, to_camera(c2w))
+    # to channel last, N, 3, W, H, C
+    planes = planes.permute(0, 1, 3, 4, 2).contiguous()
+    
+    color = volume_render.forward(
+        c2w, res=RES, fov=FOV, planes=planes, background=background, far=3
+    )
+
+    optimizer.zero_grad()
+    loss_map = l2(color, image.permute(0, 2, 3, 1).reshape(N, -1, 3)) * 1000
+    loss = loss_map.mean()
+    loss.backward()
+    optimizer.step()
+
+    loss_hist.append(loss.item())
+    progress.desc = f"{loss.item():.4f}"
+
+    wandb.log(dict(loss=loss.item()))
+    if i % 10 == 0:
+        with torch.no_grad():
+            rnd_index = np.random.randint(0, BATCH_SIZE)
+            wandb.log(
+                dict(
+                    input_image=wandb.Image(
+                        image_0[rnd_index].permute(1, 2, 0).cpu().numpy()
+                    ),
+                    target_image=wandb.Image(
+                        image[rnd_index].permute(1, 2, 0).cpu().numpy()
+                    ),
+                    hypo_image=wandb.Image(
+                        color[rnd_index].reshape(RES, RES, 3).detach().cpu().numpy()
+                    ),
                 )
+            )
 
-
-except KeyboardInterrupt:
-    pass
 # %%
 with torch.no_grad():
     dataset = Renderings(
@@ -144,28 +155,25 @@ with torch.no_grad():
     # dataset = datasets[0]
     image_0, background, c2w_0 = dataset[0]
     image, background, c2w = dataset[3]
-    planes = (
-        generator.forward_planes(image_0, to_camera(c2w))
-        .squeeze(0)
-        .permute(0, 2, 3, 1)
-        .contiguous()
-    )
+    # channel first, N, 3, C, W, H
+    planes = generator.forward_planes(image_0, to_camera(c2w))
+    # to channel last, N, 3, W, H, C
+    planes = planes.permute(0, 1, 3, 4, 2).contiguous()
     color = volume_render.forward(
         c2w, res=RES, fov=FOV, planes=planes, background=background, far=3
     )
 
-
     wandb.log(
-    dict(
-        input_image=wandb.Image(
-            image_0.squeeze(0).permute(1, 2, 0).cpu().numpy()
-        ),
-        target_image=wandb.Image(
-            image.squeeze(0).permute(1, 2, 0).cpu().numpy()
-        ),
-        hypo_image=wandb.Image(
-            color.reshape(RES, RES, 3).detach().cpu().numpy()
-        ),
+        dict(
+            input_image=wandb.Image(
+                image_0.squeeze(0).permute(1, 2, 0).cpu().numpy()
+            ),
+            target_image=wandb.Image(
+                image.squeeze(0).permute(1, 2, 0).cpu().numpy()
+            ),
+            hypo_image=wandb.Image(
+                color.reshape(RES, RES, 3).detach().cpu().numpy()
+            ),
+        )
     )
-)
 # %%

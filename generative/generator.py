@@ -37,7 +37,6 @@ class LRMGenerator(nn.Module):
         # camera: [N, D_cam_raw]
         assert image.shape[0] == camera.shape[0], "Batch size mismatch for image and camera"
         N = image.shape[0]
-
         # encode image
         image_feats = self.encoder(image)
 

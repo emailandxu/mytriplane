@@ -69,11 +69,19 @@ class VolumeRender(torch.nn.Module):
         return x
 
     def to_rays(self, c2w, res, fov):
-        ray: RayBundle = to_pinhole(fov=fov, res_w=res, res_h=res).build(
-            self.device
-        )
-        rays_o = ray.origins.reshape(-1, 3) + self.contraction(c2w[0, :3, 3])
-        rays_d = (c2w[0, :3, :3] @ ray.directions.reshape(-1, 3).T).T
+        ray: RayBundle = to_pinhole(fov=fov, res_w=res, res_h=res).build(self.device)
+        N = c2w.shape[0]  # batch size
+        rays_o = ray.origins.unsqueeze(0).repeat(N, 1, 1, 1).reshape(
+            N, -1, 3
+        ) + self.contraction(c2w[..., None, :3, 3])
+
+        rays_d = (
+            c2w[..., :3, :3]
+            @ ray.directions.unsqueeze(0)
+            .repeat(N, 1, 1, 1)
+            .reshape(N, -1, 3)
+            .permute(0, 2, 1)
+        ).permute(0, 2, 1)
         return rays_o, rays_d
 
     def forward(
@@ -88,58 +96,62 @@ class VolumeRender(torch.nn.Module):
         render_step=RENDERSTEP,
         update_estimator=True,
     ):
-        rays_o, rays_d = self.to_rays(c2w, res, fov)
+        # breakpoint()
+        batched_rays_o, batched_rays_d = self.to_rays(c2w, res, fov)
+        colors = []
 
-        if update_estimator and self.training:
-            self.step += 1
+        for idx, (rays_o, rays_d) in enumerate(zip(batched_rays_o, batched_rays_d)):
+            if update_estimator and self.training:
+                self.step += 1
 
-            def occ_eval_fn(x):
-                # breakpoint()
-                return self.field.query_density(x, planes=planes)["density"]
+                def occ_eval_fn(x):
+                    # breakpoint()
+                    return self.field.query_density(x, planes=planes[idx])["density"]
 
-            self.estimator.update_every_n_steps(
-                step=self.step,  # set to 0 update immediately
-                occ_eval_fn=lambda x: occ_eval_fn(x),
-                occ_thre=1e-2,
+                self.estimator.update_every_n_steps(
+                    step=self.step,  # set to 0 update immediately
+                    occ_eval_fn=lambda x: occ_eval_fn(x),
+                    occ_thre=1e-2,
+                    n=1,
+                )
+
+            ray_indices, t_starts, t_ends = self.estimator.sampling(
+                rays_o,
+                rays_d,
+                sigma_fn=partial(
+                    self._sigma_fn,
+                    rays_o=rays_o,
+                    rays_d=rays_d,
+                    planes=planes[idx],
+                    field=self.field,
+                ),
+                near_plane=near,
+                far_plane=far,
+                early_stop_eps=1e-4,
+                alpha_thre=0,  # this is related to render step
+                render_step_size=render_step,
+                # stratified=self.training
+                stratified=True,
             )
+            # breakpoint()
+            assert ray_indices.shape[0] > 0, "estimator doesn't allow any sample points"
 
-        # breakpoint()
-        ray_indices, t_starts, t_ends = self.estimator.sampling(
-            rays_o,
-            rays_d,
-            sigma_fn=partial(
-                self._sigma_fn,
-                rays_o=rays_o,
-                rays_d=rays_d,
-                planes=planes,
-                field=self.field,
-            ),
-            near_plane=near,
-            far_plane=far,
-            early_stop_eps=1e-4,
-            alpha_thre=0,  # this is related to render step
-            render_step_size=render_step,
-            # stratified=self.training
-            stratified=True,
-        )
-        # breakpoint()
-        assert ray_indices.shape[0] > 0, "estimator doesn't allow any sample points"
-
-        color, opacity, depth, extras = nerfacc.rendering(
-            t_starts,
-            t_ends,
-            ray_indices,
-            n_rays=rays_o.shape[0],
-            rgb_sigma_fn=partial(
-                self._rgb_sigma_fn,
-                rays_o=rays_o,
-                rays_d=rays_d,
-                planes=planes,
-                field=self.field,
-            ),
-            render_bkgd=background,
-        )
-        return color
+            color, opacity, depth, extras = nerfacc.rendering(
+                t_starts,
+                t_ends,
+                ray_indices,
+                n_rays=rays_o.shape[0],
+                rgb_sigma_fn=partial(
+                    self._rgb_sigma_fn,
+                    rays_o=rays_o,
+                    rays_d=rays_d,
+                    planes=planes[idx],
+                    field=self.field,
+                ),
+                render_bkgd=background[idx],
+            )
+            colors.append(color)
+        return torch.stack(colors)
 
 
 if __name__ == "__main__":
