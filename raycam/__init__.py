@@ -2,7 +2,7 @@ from .cameras import PinholeCamera
 from .raybunddle import RayBundle
 import numpy as np
 
-def to_pinhole(fov:float=0.6911112070083618, res_h:int=64, res_w:int=64, device:str="cpu") -> PinholeCamera:
+def to_pinhole(fov:float=0.8575560548920328, res_h:int=64, res_w:int=64, device:str="cpu") -> PinholeCamera:
     """fov is in rad"""
     camera_angle_x = float(fov)
     focal_length = 0.5 * res_w / np.tan(0.5 * camera_angle_x)

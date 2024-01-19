@@ -7,20 +7,28 @@ from raycam import to_pinhole, RayBundle
 
 RES = 256
 AABB = 0.5
+FOV = 0.8575560548920328
 NEARPLANE = 1.0
 FARPLANE = 2.7
 RENDERSTEP = (FARPLANE - NEARPLANE) / 92
 
 
 class VolumeRender(torch.nn.Module):
-    def __init__(self, field: TriMipRF, aabb: float = AABB, device:str="cuda"):
+    def __init__(
+        self,
+        field: TriMipRF,
+        aabb: float = AABB,
+        device: str = "cuda",
+    ):
         super(VolumeRender, self).__init__()
         self.field = field
         self.device = device
-        self.aabb = torch.tensor([-aabb, -aabb, -aabb, aabb, aabb, aabb], device=self.device)
-        self.estimator = nerfacc.OccGridEstimator(
-            roi_aabb=[0, 0, 0, 1, 1, 1]
-        ).to(self.device)  # due to nvdiffrast texture uv sample, it must be in 0-1
+        self.aabb = torch.tensor(
+            [-aabb, -aabb, -aabb, aabb, aabb, aabb], device=self.device
+        )
+        self.estimator = nerfacc.OccGridEstimator(roi_aabb=[0, 0, 0, 1, 1, 1]).to(
+            self.device
+        )  # due to nvdiffrast texture uv sample, it must be in 0-1
 
         self.step = -1
 
@@ -60,13 +68,11 @@ class VolumeRender(torch.nn.Module):
         x = (x - aabb_min) / (aabb_max - aabb_min)
         return x
 
-    def to_rays(self, c2w, res):
-        ray: RayBundle = to_pinhole(fov=0.8575560548920328, res_w=res, res_h=res).build(
+    def to_rays(self, c2w, res, fov):
+        ray: RayBundle = to_pinhole(fov=fov, res_w=res, res_h=res).build(
             self.device
         )
-        rays_o = ray.origins.reshape(-1, 3) + self.contraction(
-            c2w[0, :3, 3]
-        )
+        rays_o = ray.origins.reshape(-1, 3) + self.contraction(c2w[0, :3, 3])
         rays_d = (c2w[0, :3, :3] @ ray.directions.reshape(-1, 3).T).T
         return rays_o, rays_d
 
@@ -74,6 +80,7 @@ class VolumeRender(torch.nn.Module):
         self,
         c2w,
         res=64,
+        fov=FOV,
         planes=None,
         background=None,
         near=NEARPLANE,
@@ -81,7 +88,7 @@ class VolumeRender(torch.nn.Module):
         render_step=RENDERSTEP,
         update_estimator=True,
     ):
-        rays_o, rays_d = self.to_rays(c2w, res)
+        rays_o, rays_d = self.to_rays(c2w, res, fov)
 
         if update_estimator and self.training:
             self.step += 1
@@ -96,6 +103,7 @@ class VolumeRender(torch.nn.Module):
                 occ_thre=1e-2,
             )
 
+        # breakpoint()
         ray_indices, t_starts, t_ends = self.estimator.sampling(
             rays_o,
             rays_d,
@@ -109,12 +117,12 @@ class VolumeRender(torch.nn.Module):
             near_plane=near,
             far_plane=far,
             early_stop_eps=1e-4,
-            alpha_thre=1e-4, # this is related to render step
+            alpha_thre=0,  # this is related to render step
             render_step_size=render_step,
             # stratified=self.training
-            stratified=True
+            stratified=True,
         )
-        
+        # breakpoint()
         assert ray_indices.shape[0] > 0, "estimator doesn't allow any sample points"
 
         color, opacity, depth, extras = nerfacc.rendering(

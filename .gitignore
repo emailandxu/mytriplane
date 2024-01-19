@@ -1,7 +1,9 @@
 data/3d/*
 data/2d/*
+data/val/*
 rendering/blender-3.2.2-linux-x64/*
 *.pyc
 *.mp4
 *.pt
 *.npy
+wandb/*
