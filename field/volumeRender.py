@@ -93,7 +93,7 @@ class VolumeRender(torch.nn.Module):
         background=None,
         near=NEARPLANE,
         far=FARPLANE,
-        render_step=RENDERSTEP,
+        samples_per_ray=92,
         update_estimator=True,
     ):
         # breakpoint()
@@ -132,7 +132,7 @@ class VolumeRender(torch.nn.Module):
                 far_plane=far,
                 early_stop_eps=1e-4,
                 alpha_thre=0,  # this is related to render step
-                render_step_size=render_step,
+                render_step_size=(far - near)/samples_per_ray,
                 # stratified=self.training
                 stratified=True,
             )

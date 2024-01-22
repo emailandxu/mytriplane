@@ -1,0 +1,1 @@
+export PATH=/data2/xushuli/CUDA/12.1/toolkit/bin:$PATH

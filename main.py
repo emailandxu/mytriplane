@@ -35,7 +35,7 @@ FOV = 0.8575560548920328
 RES = 128
 LR = 1e-5
 STEPS = 7000
-BATCH_SIZE = 5
+BATCH_SIZE = 16
 
 wandb.init(
     project="mytriplane-generative-batched-val",
@@ -63,7 +63,23 @@ def to_camera(c2w):
 
 generator = LRMGenerator(
     kwargs_camera_embedder, kwargs_dino_model, kwargs_transformer_model
-).cuda()
+)
+
+
+path = "/home/xushuli/git-repo/OpenLRM/.cache/lrm-base-obj-v1.pth"
+checkpoint = torch.load(path, map_location="cuda")["weights"]
+keys = list(checkpoint.keys())
+for key in keys:
+    if "synthesizer" in key:
+        checkpoint.pop(key)
+
+generator.load_state_dict(checkpoint)
+generator = generator.train(False)
+generator = generator.cuda()
+
+for name, para in generator.named_parameters():
+    para.requires_grad = False
+
 
 volume_render = VolumeRender(
     field=TriMipRF(
@@ -86,7 +102,8 @@ datasets = [
 
 
 optimizer = torch.optim.Adam(
-    [*generator.parameters(), *volume_render.parameters()],
+    # [*generator.parameters(), *volume_render.parameters()],
+    [*volume_render.parameters()],
     lr=LR,
 )
 
@@ -102,11 +119,11 @@ for i in progress:
     temps = []
     for _ in range(BATCH_SIZE):
         dataset = datasets[np.random.randint(0, len(datasets))]
-        _image_0, _, _c2w_0 = dataset[0]
-        _image, _background, _c2w = dataset[np.random.randint(1, len(dataset))]
-        temps.append([_image_0, _c2w_0, _image, _background, _c2w])
+        _guidance_image, _, _c2w_0 = dataset[np.random.randint(0, len(dataset))]
+        _image, _background, _c2w = dataset[np.random.randint(0, len(dataset))]
+        temps.append([_guidance_image, _c2w_0, _image, _background, _c2w])
 
-    image_0 = torch.concat([temp[0] for temp in temps], dim=0)
+    guidance_image = torch.concat([temp[0] for temp in temps], dim=0)
     c2w_0 = torch.concat([temp[1] for temp in temps], dim=0)
     image = torch.concat([temp[2] for temp in temps], dim=0)
     background = torch.concat([temp[3] for temp in temps], dim=0)
@@ -117,7 +134,7 @@ for i in progress:
     N = c2w.shape[0]  # batch size
     # torch.Size([1, 3, 40, 64, 64])
     # channel first, N, 3, C, W, H
-    planes = generator.forward_planes(image_0, to_camera(c2w))
+    planes = generator.forward_planes(guidance_image, to_camera(c2w))
     # to channel last, N, 3, W, H, C
     planes = planes.permute(0, 1, 3, 4, 2).contiguous()
 
@@ -143,11 +160,15 @@ for i in progress:
 
             def do_val():
                 # dataset = datasets[0]
-                image_0, background, c2w_0 = val_dataset[0]
-                image, background, c2w = val_dataset[np.random.randint(1, len(val_dataset))]
+                guidance_image, background, c2w_0 = val_dataset[
+                    np.random.randint(0, len(val_dataset))
+                ]
+                image, background, c2w = val_dataset[
+                    np.random.randint(0, len(val_dataset))
+                ]
                 N = c2w.shape[0]
                 # channel first, N, 3, C, W, H
-                planes = generator.forward_planes(image_0, to_camera(c2w))
+                planes = generator.forward_planes(guidance_image, to_camera(c2w))
                 # to channel last, N, 3, W, H, C
                 planes = planes.permute(0, 1, 3, 4, 2).contiguous()
                 color = volume_render.forward(
@@ -156,13 +177,13 @@ for i in progress:
                 loss_map = l2(color, image.permute(0, 2, 3, 1).reshape(N, -1, 3)) * 1000
                 loss = loss_map.mean()
                 return image, color, loss
-            
+
             val_image, val_color, val_loss = do_val()
 
             wandb.log(
                 dict(
                     input_image=wandb.Image(
-                        image_0[rnd_index].permute(1, 2, 0).cpu().numpy()
+                        guidance_image[rnd_index].permute(1, 2, 0).cpu().numpy()
                     ),
                     target_image=wandb.Image(
                         image[rnd_index].permute(1, 2, 0).cpu().numpy()
