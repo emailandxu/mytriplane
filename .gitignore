@@ -1,6 +1,7 @@
 data/3d/*
 data/2d/*
 data/val/*
+data/cap3d/*
 rendering/blender-3.2.2-linux-x64/*
 *.pyc
 *.mp4
